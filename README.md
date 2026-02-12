@@ -8,7 +8,7 @@ Ghost non-blockingly records Claude Code sessions as markdown, attaches them to 
 
 Ghost installs as a set of [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that fire on session start, prompt submit, file write, turn completion, and session end. Every hook exits in under 100ms. Heavy work (AI summarization, git notes, QMD indexing) runs in a detached background process after the session ends.
 
-Sessions are stored as human-readable markdown in `.ai-sessions/completed/`, with YAML frontmatter for structured metadata. Git notes attach session context directly to commits. QMD exposes session history as an MCP server so Claude Code can search past reasoning within the current project.
+Sessions are stored as human-readable markdown in `.ai-sessions/completed/` (gitignored, local only), with YAML frontmatter for structured metadata. Git notes attach session context directly to commits. QMD exposes session history as an MCP server so Claude Code can search past reasoning within the current project. Secrets are automatically redacted before content reaches disk.
 
 ```
 .ai-sessions/
@@ -137,6 +137,7 @@ area:cart, fees, type:refactor
 | `ghost enable -f` | Same, but auto-install missing dependencies |
 | `ghost enable --genesis` | Same, plus build initial knowledge base from codebase |
 | `ghost disable` | Remove hooks (keeps session files) |
+| `ghost reset` | Clear all session data, git notes, and QMD collection (keeps hooks) |
 | `ghost status` | Show current session, counts, dependency status |
 
 ### Search and Browse
@@ -185,6 +186,8 @@ area:cart, fees, type:refactor
 | `ghost stats` | Session metrics and trends |
 | `ghost stats --json` | Structured output |
 | `ghost stats --since <date>` | Filter by date |
+| `ghost validate` | Check session files for formatting errors |
+| `ghost validate -f` | Auto-fix fixable formatting issues |
 | `ghost reindex` | Rebuild QMD collection from all completed sessions |
 
 ## Session Hooks
@@ -278,6 +281,10 @@ All data is local. No SaaS, no external services. Everything is scoped to the in
 ```bash
 bun src/index.ts <command>   # Run from source
 bun test                     # Run all tests
+bun run typecheck            # TypeScript type checking
+bun run format               # Auto-format with Biome
+bun run lint                 # Biome linting + format check
+bun run check                # Run all checks (typecheck + lint + test)
 bun link                     # Install globally as 'ghost'
 ```
 

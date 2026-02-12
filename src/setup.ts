@@ -299,15 +299,15 @@ export async function status(root: string): Promise<void> {
 // Reset
 // =============================================================================
 
-/** Wipe all session data. Keeps ghost enabled (hooks stay configured). */
-export function reset(root: string): void {
+/** Wipe all session data, git notes, and QMD collection. Keeps ghost enabled. */
+export async function reset(root: string): Promise<void> {
   const dir = join(root, SESSION_DIR);
   if (!existsSync(dir)) {
     console.log("Nothing to reset — no .ai-sessions/ directory found.");
     return;
   }
 
-  // Remove everything inside .ai-sessions/
+  // 1. Remove everything inside .ai-sessions/
   for (const entry of readdirSync(dir)) {
     rmSync(join(dir, entry), { recursive: true, force: true });
   }
@@ -315,8 +315,33 @@ export function reset(root: string): void {
   // Re-create directory structure
   mkdirSync(activeDir(root), { recursive: true });
   mkdirSync(completedDir(root), { recursive: true });
+  console.log(`  ${c.green}✓${c.reset} Session files cleared`);
 
-  console.log(`${c.green}Ghost reset.${c.reset} All session data cleared. Hooks still active.`);
+  // 2. Remove git notes ref
+  try {
+    const { $ } = await import("bun");
+    await $`git notes --ref=ai-sessions prune`.quiet();
+    // Remove the entire notes ref
+    await $`git update-ref -d refs/notes/ai-sessions`.quiet();
+    console.log(`  ${c.green}✓${c.reset} Git notes removed`);
+  } catch {
+    // Notes ref may not exist
+  }
+
+  // 3. Delete QMD collection
+  try {
+    const { collectionName, isQmdAvailable } = await import("./qmd.js");
+    if (await isQmdAvailable()) {
+      const name = await collectionName(root);
+      const { $ } = await import("bun");
+      await $`qmd collection remove ${name}`.quiet();
+      console.log(`  ${c.green}✓${c.reset} QMD collection removed`);
+    }
+  } catch {
+    // QMD may not be available
+  }
+
+  console.log(`\n${c.green}Ghost reset.${c.reset} All session data cleared. Hooks still active.`);
 }
 
 // =============================================================================

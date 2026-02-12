@@ -223,7 +223,7 @@ if (import.meta.main) {
       case "reset": {
         const root = await repoRoot();
         const { reset } = await import("./setup.js");
-        reset(root);
+        await reset(root);
         break;
       }
 
