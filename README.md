@@ -10,14 +10,44 @@ Ghost installs as a set of [Claude Code hooks](https://docs.anthropic.com/en/doc
 
 Sessions are stored as human-readable markdown in `.ai-sessions/completed/` (gitignored, local only), with YAML frontmatter for structured metadata. Git notes attach session context directly to commits. QMD exposes session history as an MCP server so Claude Code can search past reasoning within the current project. Secrets are automatically redacted before content reaches disk.
 
+```mermaid
+flowchart TB
+    subgraph during["During Session (hooks, <100ms each)"]
+        CC["Claude Code"] -->|SessionStart| SS["Create session file"]
+        CC -->|UserPromptSubmit| PR["Record prompt"]
+        CC -->|PostToolUse| FW["Record file changes"]
+        CC -->|Stop| TD["Record turn delimiter"]
+        SS & PR & FW & TD --> AF[".ai-sessions/active/"]
+    end
+
+    subgraph after["Session End (background, async)"]
+        CC -->|SessionEnd| FIN["Finalize & redact secrets"]
+        FIN --> COMP[".ai-sessions/completed/"]
+        COMP --> SUM["AI summarize via claude -p"]
+        SUM --> EXTRACT["Extract tags, decisions, mistakes"]
+        EXTRACT --> GN["Attach git note to HEAD"]
+        EXTRACT --> QMD["Index into QMD collection"]
+    end
+
+    subgraph next["Next Session"]
+        SS2["SessionStart"] -->|warm resume| COMP
+        SS2 -->|inject pitfalls| MIS[".ai-sessions/mistakes.md"]
+        QMD -->|MCP server| SEARCH["Agent searches past sessions"]
+    end
+
+    style during fill:#1a1a2e,stroke:#4a4a6a,color:#e0e0e0
+    style after fill:#16213e,stroke:#4a4a6a,color:#e0e0e0
+    style next fill:#0f3460,stroke:#4a4a6a,color:#e0e0e0
 ```
-.ai-sessions/
-  active/              # Current in-progress session
-  completed/           # Finalized session markdown files
-  knowledge.md         # Auto-generated project knowledge base
-  mistakes.md          # Mistake ledger (negative knowledge)
-  decisions.md         # Decision log (ADR-lite)
-  tags.json            # Tag -> session ID index
+
+```
+.ai-sessions/            (gitignored, local only)
+  active/                 Current in-progress session
+  completed/              Finalized session markdown files
+  knowledge.md            Auto-generated project knowledge base
+  mistakes.md             Mistake ledger (negative knowledge)
+  decisions.md            Decision log (ADR-lite)
+  tags.json               Tag -> session ID index
 ```
 
 ## Requirements
@@ -40,6 +70,20 @@ git clone https://github.com/notkurt/ghost.git
 cd ghost
 bun install
 bun link
+```
+
+## Update
+
+```bash
+bun install -g github:notkurt/ghost
+```
+
+Or if cloned locally:
+
+```bash
+cd ghost
+git pull
+bun install
 ```
 
 ## Setup
