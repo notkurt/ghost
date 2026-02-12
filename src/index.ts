@@ -35,6 +35,7 @@ function parseCLI() {
     args: Bun.argv.slice(2),
     options: {
       help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
       tag: { type: "string" },
       json: { type: "boolean" },
       since: { type: "string" },
@@ -112,6 +113,7 @@ ${c.bold}Analytics:${c.reset}
   ${c.cyan}reindex${c.reset}              Rebuild QMD collection
 
 ${c.bold}Options:${c.reset}
+  -v, --version       Show version
   -h, --help          Show this help
   --tag <tag>         Filter by tag
   --json              JSON output
@@ -134,6 +136,12 @@ if (import.meta.main) {
   }
 
   const cli = parseCLI();
+
+  if (cli.values.version || cli.command === "version") {
+    const { version } = await import("../package.json");
+    console.log(version);
+    process.exit(0);
+  }
 
   if (!cli.command || cli.values.help) {
     showHelp();
