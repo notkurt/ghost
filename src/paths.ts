@@ -66,3 +66,8 @@ export function mistakesPath(repoRoot: string): string {
 export function decisionsPath(repoRoot: string): string {
   return join(repoRoot, SESSION_DIR, DECISIONS_FILE);
 }
+
+/** Path to the last-sync timestamp file (for rate-limiting remote fetches) */
+export function lastSyncPath(repoRoot: string): string {
+  return join(repoRoot, SESSION_DIR, ".last-sync");
+}

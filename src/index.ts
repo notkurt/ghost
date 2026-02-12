@@ -96,6 +96,7 @@ ${c.bold}Knowledge:${c.reset}
   ${c.cyan}knowledge${c.reset} diff       Show changes since last build
   ${c.cyan}genesis${c.reset}              Build initial knowledge base from codebase
   ${c.cyan}edit${c.reset} <file>          Edit knowledge, mistakes, or decisions
+  ${c.cyan}sync${c.reset}                 Sync shared knowledge via git orphan branch
 
 ${c.bold}Tagging:${c.reset}
   ${c.cyan}tag${c.reset} <id> <tags...>   Add tags to a session
@@ -529,6 +530,14 @@ if (import.meta.main) {
         const { indexSession } = await import("./qmd.js");
         await indexSession(root);
         console.log("Reindexed.");
+        break;
+      }
+
+      case "sync": {
+        const root = await repoRoot();
+        const { syncKnowledge } = await import("./sync.js");
+        await syncKnowledge(root);
+        console.log("Shared knowledge synced.");
         break;
       }
 

@@ -186,7 +186,21 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`  ${c.bold}Summarize:${c.reset}    ${c.yellow}disabled${c.reset} (claude CLI not found)`);
   }
 
-  // 10. Optional genesis — build initial knowledge base from codebase
+  // 10. Initialize shared knowledge branch and pull team knowledge
+  try {
+    const { initSharedBranch, pullShared } = await import("./sync.js");
+    const branchOk = await initSharedBranch(root);
+    if (branchOk) {
+      await pullShared(root);
+      console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.green}(synced)${c.reset}`);
+    } else {
+      console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.yellow}(skipped)${c.reset}`);
+    }
+  } catch {
+    console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.yellow}(skipped)${c.reset}`);
+  }
+
+  // 11. Optional genesis — build initial knowledge base from codebase
   if (opts?.genesis && report.claude.available) {
     console.log("");
     const { genesis } = await import("./knowledge.js");
@@ -293,6 +307,17 @@ export async function status(root: string): Promise<void> {
   console.log(
     `${c.bold}Claude CLI:${c.reset}        ${report.claude.available ? `${c.green}available${c.reset}` : `${c.yellow}not found${c.reset} (summarization disabled)`}`,
   );
+
+  // Check shared branch status
+  try {
+    const { branchExists } = await import("./git.js");
+    const exists = await branchExists("ghost/knowledge", root);
+    console.log(
+      `${c.bold}Shared branch:${c.reset}     ${exists ? `${c.green}ghost/knowledge${c.reset}` : `${c.yellow}not initialized${c.reset}`}`,
+    );
+  } catch {
+    // ignore
+  }
 }
 
 // =============================================================================

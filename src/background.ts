@@ -94,6 +94,15 @@ try {
     log(`QMD indexing failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
+  // 6. Sync shared knowledge to orphan branch (and remote)
+  try {
+    const { pushShared } = await import("./sync.js");
+    await pushShared(repoRoot);
+    log("Shared knowledge synced");
+  } catch (err) {
+    log(`Shared knowledge sync failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   log("Background finalization complete");
 } catch (err) {
   log(`Background finalization failed: ${err instanceof Error ? err.message : String(err)}`);

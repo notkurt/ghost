@@ -68,3 +68,57 @@ export async function configGet(key: string): Promise<string | null> {
     return null;
   }
 }
+
+/** Check if the repo has any configured remote */
+export async function hasRemote(root?: string): Promise<boolean> {
+  try {
+    const result = root ? await $`git -C ${root} remote`.quiet() : await $`git remote`.quiet();
+    return result.text().trim().length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** Check if a local branch exists */
+export async function branchExists(name: string, root?: string): Promise<boolean> {
+  try {
+    const ref = `refs/heads/${name}`;
+    if (root) {
+      await $`git -C ${root} rev-parse --verify ${ref}`.quiet();
+    } else {
+      await $`git rev-parse --verify ${ref}`.quiet();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Fetch a branch from origin. Returns true on success. */
+export async function fetchBranch(branch: string, root?: string): Promise<boolean> {
+  try {
+    const refspec = `${branch}:${branch}`;
+    if (root) {
+      await $`git -C ${root} fetch origin ${refspec} --no-tags`.quiet();
+    } else {
+      await $`git fetch origin ${refspec} --no-tags`.quiet();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Push a branch to origin. Returns true on success. */
+export async function pushBranch(branch: string, root?: string): Promise<boolean> {
+  try {
+    if (root) {
+      await $`git -C ${root} push origin ${branch} --no-verify`.quiet();
+    } else {
+      await $`git push origin ${branch} --no-verify`.quiet();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}

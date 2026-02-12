@@ -26,6 +26,14 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
   const root = input.cwd || (await repoRoot());
   const _id = await createSession(root);
 
+  // Pull shared knowledge (rate-limited internally)
+  try {
+    const { pullShared } = await import("./sync.js");
+    await pullShared(root);
+  } catch {
+    // Non-critical
+  }
+
   const parts: string[] = [];
 
   // Check for recent session on same branch for warm resume

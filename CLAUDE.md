@@ -28,6 +28,7 @@ ghost stats               # Session metrics
 ghost validate            # Check session files for formatting errors
 ghost validate -f         # Auto-fix fixable formatting issues
 ghost reindex             # Rebuild QMD collection
+ghost sync                # Sync shared knowledge via git orphan branch
 ghost update              # Update ghost to latest version
 ghost version             # Show current version (also: --version, -v)
 ```
@@ -54,6 +55,7 @@ Always run `bun run check` before committing to ensure typecheck, lint, and test
 - QMD collection `ghost-<repo>` for semantic search
 - Claude Code hooks for non-blocking capture (<50ms per hook)
 - AI summarization via `claude -p` on session end (background process)
+- Shared knowledge via `ghost/knowledge` orphan branch (no worktree impact)
 
 ## Important
 
