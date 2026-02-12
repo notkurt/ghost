@@ -1,6 +1,6 @@
 {
   "name": "ghost",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Local AI session capture & search for Claude Code",
   "type": "module",
   "bin": {
