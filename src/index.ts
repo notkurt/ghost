@@ -72,6 +72,7 @@ ${c.bold}Setup:${c.reset}
   ${c.cyan}disable${c.reset}             Remove hooks (keeps session files)
   ${c.cyan}reset${c.reset}               Clear all session data (keeps hooks)
   ${c.cyan}status${c.reset}              Current session, counts, config status
+  ${c.cyan}update${c.reset}              Update ghost to latest version
 
 ${c.bold}Session hooks${c.reset} ${c.dim}(called by Claude Code):${c.reset}
   session-start       Create new session file
@@ -239,6 +240,51 @@ if (import.meta.main) {
         const root = await repoRoot();
         const { status } = await import("./setup.js");
         await status(root);
+        break;
+      }
+
+      case "update": {
+        const { resolve } = await import("node:path");
+        const { existsSync } = await import("node:fs");
+        const { $ } = await import("bun");
+        const { version: currentVersion } = await import("../package.json");
+        const ghostRoot = resolve(import.meta.dir, "..");
+        const isGitClone = existsSync(resolve(ghostRoot, ".git"));
+
+        console.log(`Current version: ${c.dim}${currentVersion}${c.reset}`);
+
+        if (isGitClone) {
+          console.log("Updating via git pull...");
+          const pull = await $`git -C ${ghostRoot} pull origin main`.nothrow().quiet();
+          if (pull.exitCode !== 0) {
+            console.error(`${c.red}git pull failed:${c.reset} ${pull.stderr.toString()}`);
+            process.exit(1);
+          }
+          await $`bun install --cwd ${ghostRoot}`.nothrow().quiet();
+        } else {
+          console.log("Reinstalling from GitHub...");
+          await $`bun remove -g ghost`.nothrow().quiet();
+          const install = await $`bun install -g github:notkurt/ghost#main`.nothrow().quiet();
+          if (install.exitCode !== 0) {
+            // Retry with cache clear
+            await $`bun pm cache rm`.nothrow().quiet();
+            const retry = await $`bun install -g github:notkurt/ghost#main`.nothrow().quiet();
+            if (retry.exitCode !== 0) {
+              console.error(
+                `${c.red}Update failed.${c.reset} Try manually: git clone https://github.com/notkurt/ghost.git && cd ghost && bun install && bun link`,
+              );
+              process.exit(1);
+            }
+          }
+        }
+
+        // Read new version from disk (can't re-import cached module)
+        const newPkg = JSON.parse(await Bun.file(resolve(ghostRoot, "package.json")).text());
+        if (newPkg.version !== currentVersion) {
+          console.log(`Updated: ${c.green}${currentVersion}${c.reset} → ${c.green}${newPkg.version}${c.reset}`);
+        } else {
+          console.log(`Already up to date (${c.green}${currentVersion}${c.reset}).`);
+        }
         break;
       }
 

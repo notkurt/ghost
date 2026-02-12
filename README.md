@@ -75,22 +75,10 @@ bun link
 ## Update
 
 ```bash
-bun install -g --force github:notkurt/ghost#main
+ghost update
 ```
 
-Or if cloned locally:
-
-```bash
-cd ghost
-git pull
-bun install
-```
-
-Check your version:
-
-```bash
-ghost --version
-```
+This auto-detects your install method (git clone or global bun package) and updates accordingly. Check your version with `ghost --version`.
 
 ## Setup
 
@@ -189,6 +177,8 @@ area:cart, fees, type:refactor
 | `ghost disable` | Remove hooks (keeps session files) |
 | `ghost reset` | Clear all session data, git notes, and QMD collection (keeps hooks) |
 | `ghost status` | Show current session, counts, dependency status |
+| `ghost update` | Update ghost to latest version |
+| `ghost version` | Show current version (also `--version`, `-v`) |
 
 ### Search and Browse
 

@@ -28,6 +28,8 @@ ghost stats               # Session metrics
 ghost validate            # Check session files for formatting errors
 ghost validate -f         # Auto-fix fixable formatting issues
 ghost reindex             # Rebuild QMD collection
+ghost update              # Update ghost to latest version
+ghost version             # Show current version (also: --version, -v)
 ```
 
 ## Development
