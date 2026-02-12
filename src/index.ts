@@ -126,6 +126,12 @@ ${c.bold}Options:${c.reset}
 // =============================================================================
 
 if (import.meta.main) {
+  // Prevent infinite loop: ghost spawns `claude -p` for summarization,
+  // which triggers Claude Code hooks, which call ghost again.
+  if (process.env.GHOST_INTERNAL) {
+    process.exit(0);
+  }
+
   const cli = parseCLI();
 
   if (!cli.command || cli.values.help) {

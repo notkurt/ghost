@@ -85,6 +85,7 @@ export async function buildKnowledge(repoRoot: string): Promise<void> {
       stdin: new TextEncoder().encode(input),
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, GHOST_INTERNAL: "1" },
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
@@ -217,6 +218,7 @@ export async function generateBrief(repoRoot: string, description: string): Prom
       stdin: new TextEncoder().encode(input),
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, GHOST_INTERNAL: "1" },
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
@@ -346,6 +348,7 @@ export async function genesis(repoRoot: string): Promise<boolean> {
       stdin: new TextEncoder().encode(input),
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, GHOST_INTERNAL: "1" },
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;

@@ -44,6 +44,7 @@ export async function summarize(sessionPath: string): Promise<string | null> {
       stdin: Bun.file(sessionPath),
       stdout: "pipe",
       stderr: "pipe",
+      env: { ...process.env, GHOST_INTERNAL: "1" },
     });
     const stdout = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
