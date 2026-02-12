@@ -31,11 +31,10 @@ describe("enable", () => {
     expect(existsSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR))).toBe(true);
   });
 
-  test("writes .ai-sessions/.gitignore", async () => {
+  test("adds .ai-sessions/ to project .gitignore", async () => {
     await enable(tmpDir);
-    const gitignore = readFileSync(join(tmpDir, SESSION_DIR, ".gitignore"), "utf8");
-    expect(gitignore).toContain("active/");
-    expect(gitignore).toContain("!completed/");
+    const gitignore = readFileSync(join(tmpDir, ".gitignore"), "utf8");
+    expect(gitignore).toContain(".ai-sessions/");
   });
 
   test("writes correct hooks config", async () => {

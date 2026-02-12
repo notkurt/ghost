@@ -69,6 +69,7 @@ ${c.bold}Setup:${c.reset}
   ${c.cyan}enable -f${c.reset}           Auto-install missing dependencies
   ${c.cyan}enable --genesis${c.reset}    Also build initial knowledge base from codebase
   ${c.cyan}disable${c.reset}             Remove hooks (keeps session files)
+  ${c.cyan}reset${c.reset}               Clear all session data (keeps hooks)
   ${c.cyan}status${c.reset}              Current session, counts, config status
 
 ${c.bold}Session hooks${c.reset} ${c.dim}(called by Claude Code):${c.reset}
@@ -216,6 +217,13 @@ if (import.meta.main) {
         const root = await repoRoot();
         const { disable } = await import("./setup.js");
         await disable(root);
+        break;
+      }
+
+      case "reset": {
+        const root = await repoRoot();
+        const { reset } = await import("./setup.js");
+        reset(root);
         break;
       }
 

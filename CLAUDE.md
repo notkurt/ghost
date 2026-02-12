@@ -9,6 +9,7 @@ ghost enable              # Set up hooks, dirs, git notes, QMD collection
 ghost enable -f           # Auto-install missing dependencies
 ghost enable --genesis    # Also build initial knowledge base from codebase
 ghost disable             # Remove hooks, keep session files
+ghost reset               # Clear all session data, keep hooks
 ghost status              # Current session, counts, QMD status
 ghost search <query>      # QMD search across sessions
 ghost log                 # Recent sessions with summaries

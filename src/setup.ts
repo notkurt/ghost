@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   checkAllDeps,
@@ -120,12 +120,8 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   mkdirSync(activeDir(root), { recursive: true });
   mkdirSync(completedDir(root), { recursive: true });
 
-  // 3. Write .ai-sessions/.gitignore
-  const sessGitignore = join(root, SESSION_DIR, ".gitignore");
-  writeFileSync(
-    sessGitignore,
-    `# Ignore active sessions (in-progress)\nactive/\n\n# Keep completed sessions\n!completed/\n`,
-  );
+  // 3. Ensure .ai-sessions/ is in the project's .gitignore
+  ensureGitignored(root);
 
   // 4. Configure git notes display
   await configSet("notes.displayRef", "refs/notes/ai-sessions");
@@ -300,6 +296,30 @@ export async function status(root: string): Promise<void> {
 }
 
 // =============================================================================
+// Reset
+// =============================================================================
+
+/** Wipe all session data. Keeps ghost enabled (hooks stay configured). */
+export function reset(root: string): void {
+  const dir = join(root, SESSION_DIR);
+  if (!existsSync(dir)) {
+    console.log("Nothing to reset — no .ai-sessions/ directory found.");
+    return;
+  }
+
+  // Remove everything inside .ai-sessions/
+  for (const entry of readdirSync(dir)) {
+    rmSync(join(dir, entry), { recursive: true, force: true });
+  }
+
+  // Re-create directory structure
+  mkdirSync(activeDir(root), { recursive: true });
+  mkdirSync(completedDir(root), { recursive: true });
+
+  console.log(`${c.green}Ghost reset.${c.reset} All session data cleared. Hooks still active.`);
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -309,6 +329,18 @@ function readSettings(path: string): Record<string, any> {
     return JSON.parse(readFileSync(path, "utf8"));
   } catch {
     return {};
+  }
+}
+
+/** Add .ai-sessions/ to the project's root .gitignore if not already present */
+function ensureGitignored(root: string): void {
+  const gitignorePath = join(root, ".gitignore");
+  if (existsSync(gitignorePath)) {
+    const content = readFileSync(gitignorePath, "utf8");
+    if (content.includes(".ai-sessions")) return;
+    appendFileSync(gitignorePath, "\n# Ghost session data (local only)\n.ai-sessions/\n");
+  } else {
+    writeFileSync(gitignorePath, "# Ghost session data (local only)\n.ai-sessions/\n");
   }
 }
 
