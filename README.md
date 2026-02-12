@@ -60,7 +60,7 @@ flowchart TB
 ## Install
 
 ```bash
-bun install -g github:notkurt/ghost
+bun install -g github:notkurt/ghost#main
 ```
 
 Or clone and link:
@@ -75,7 +75,7 @@ bun link
 ## Update
 
 ```bash
-bun install -g github:notkurt/ghost
+bun install -g --force github:notkurt/ghost#main
 ```
 
 Or if cloned locally:
@@ -84,6 +84,12 @@ Or if cloned locally:
 cd ghost
 git pull
 bun install
+```
+
+Check your version:
+
+```bash
+ghost --version
 ```
 
 ## Setup
