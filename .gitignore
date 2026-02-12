@@ -1,0 +1,12 @@
+node_modules/
+.DS_Store
+*.sqlite
+.ai-sessions/
+.cursor/
+
+# Test artifacts
+.test-tmp-*/
+*.tsbuildinfo
+
+# Build artifacts
+dist/
