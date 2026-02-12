@@ -37,14 +37,19 @@ export async function collectionExists(root?: string): Promise<boolean> {
   }
 }
 
-/** Index a session file into the project's QMD collection */
+/** Index sessions into the project's QMD collection. Creates collection if needed, updates if exists. */
 export async function indexSession(root: string): Promise<boolean> {
   if (!(await isQmdAvailable())) return false;
   const name = await collectionName(root);
   const dir = completedDir(root);
   try {
-    await $`qmd collection add ${dir} --name ${name}`.quiet();
-    await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
+    const exists = await collectionExists(root);
+    if (exists) {
+      await $`qmd update`.quiet();
+    } else {
+      await $`qmd collection add ${dir} --name ${name}`.quiet();
+      await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
+    }
     await $`qmd embed`.quiet();
     return true;
   } catch {
@@ -72,10 +77,21 @@ export async function createCollection(root: string): Promise<boolean> {
   const name = await collectionName(root);
   const dir = completedDir(root);
   try {
+    if (await collectionExists(root)) return true;
     await $`qmd collection add ${dir} --name ${name}`.quiet();
     await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
     return true;
   } catch {
     return false;
+  }
+}
+
+/** Remove a QMD collection by name. Used by reset and test cleanup. */
+export async function removeCollection(name: string): Promise<void> {
+  if (!(await isQmdAvailable())) return;
+  try {
+    await $`qmd collection remove ${name}`.quiet();
+  } catch {
+    // Collection may not exist
   }
 }

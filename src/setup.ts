@@ -330,11 +330,10 @@ export async function reset(root: string): Promise<void> {
 
   // 3. Delete QMD collection
   try {
-    const { collectionName, isQmdAvailable } = await import("./qmd.js");
+    const { collectionName, isQmdAvailable, removeCollection } = await import("./qmd.js");
     if (await isQmdAvailable()) {
       const name = await collectionName(root);
-      const { $ } = await import("bun");
-      await $`qmd collection remove ${name}`.quiet();
+      await removeCollection(name);
       console.log(`  ${c.green}✓${c.reset} QMD collection removed`);
     }
   } catch {

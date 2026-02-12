@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { $ } from "bun";
 import { resetDepCache } from "./deps.js";
 import { ACTIVE_DIR, COMPLETED_DIR, SESSION_DIR } from "./paths.js";
-import { isQmdAvailable, resetQmdCache } from "./qmd.js";
+import { collectionName, isQmdAvailable, removeCollection, resetQmdCache } from "./qmd.js";
 import { disable, enable } from "./setup.js";
 
 let tmpDir: string;
@@ -18,7 +18,14 @@ beforeEach(async () => {
   resetDepCache();
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // Clean up QMD collection created by enable()
+  try {
+    const name = await collectionName(tmpDir);
+    await removeCollection(name);
+  } catch {
+    // ignore
+  }
   if (existsSync(tmpDir)) {
     rmSync(tmpDir, { recursive: true, force: true });
   }
