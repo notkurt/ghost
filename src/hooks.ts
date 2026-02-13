@@ -112,7 +112,7 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
 > decisions, dead ends, and reasoning that raw code search won't reveal. Check Ghost first, then grep.
 >
 > **Ghost commands:** \`ghost search <query>\`, \`ghost show <id>\` (read session),
-> \`ghost log\`, \`ghost decisions\`. MCP tool: \`ghost-sessions\`.`,
+> \`ghost log\`, \`ghost decisions\`. MCP tool: \`ghost-sessions\` (prefer \`deep_search\` over \`search\`).`,
   );
 
   if (parts.length > 0) {

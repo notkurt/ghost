@@ -455,7 +455,7 @@ Past sessions contain architecture decisions, dead ends, and reasoning that raw 
 | \`ghost log\` | Recent sessions with summaries |
 | \`ghost decisions\` | Decision log |
 
-Also available as MCP tool: \`ghost-sessions\`
+Also available as MCP tool: \`ghost-sessions\` (prefer \`deep_search\` over \`search\`)
 ${GHOST_HEADER_SENTINEL}`;
 
 /** Inject or replace Ghost header at the top of CLAUDE.md */
