@@ -525,11 +525,9 @@ export async function absorb(repoRoot: string, opts?: { dryRun?: boolean }): Pro
       return;
     }
 
-    // Parse JSON from response (strip markdown fences if present)
-    const jsonStr = stdout
-      .replace(/^```json?\n?/, "")
-      .replace(/\n?```$/, "")
-      .trim();
+    // Parse JSON from response (strip markdown fences, preamble, etc.)
+    const fenceMatch = stdout.match(/```json?\s*\n([\s\S]*?)\n\s*```/);
+    const jsonStr = fenceMatch ? fenceMatch[1]!.trim() : stdout.trim();
     result = JSON.parse(jsonStr) as AbsorbResult;
   } catch (err) {
     console.error(`Absorb failed: ${err instanceof Error ? err.message : String(err)}`);
