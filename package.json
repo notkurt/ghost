@@ -27,7 +27,13 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "qmd": "github:tobi/qmd"
+  },
+  "peerDependenciesMeta": {
+    "qmd": {
+      "optional": true
+    }
   },
   "engines": {
     "bun": ">=1.0.0"
