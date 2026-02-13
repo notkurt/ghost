@@ -19,6 +19,7 @@
   "dependencies": {
     "@secretlint/node": "^11.2.4",
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.4",
+    "qmd": "github:tobi/qmd",
     "yaml": "^2.8.2",
     "zod": "^4.2.1"
   },
@@ -27,13 +28,7 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5.9.3",
-    "qmd": "github:tobi/qmd"
-  },
-  "peerDependenciesMeta": {
-    "qmd": {
-      "optional": true
-    }
+    "typescript": "^5.9.3"
   },
   "engines": {
     "bun": ">=1.0.0"
