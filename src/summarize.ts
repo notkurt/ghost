@@ -11,24 +11,29 @@ const SUMMARY_PROMPT = `Summarize this AI coding session. Return markdown with t
 What was the developer trying to accomplish (1-2 sentences)
 
 ## Changes
-Files modified and why (bullet list)
+Files modified and why (bullet list). Use repo-relative paths (not absolute).
 
 ## Decisions
-Key technical decisions made and reasoning. Only include significant decisions
-involving architecture, technology choice, or approach selection.
+Key technical decisions made and reasoning. Only include decisions where there was a
+genuine choice between alternatives — architecture, algorithm, API design, data model.
+Do NOT include: where documentation was placed, file naming, routine implementation choices,
+or anything that followed an obvious existing pattern.
+If no significant decisions were made, write "None" on its own line.
 Format each as:
 **{short title}**: {context} → {decision} ({reasoning})
-Files: {comma-separated file paths where this applies}
+Files: {comma-separated repo-relative file paths where this applies}
 Rule: {if applicable, an assertion-style constraint: WHEN {context} NEVER/ALWAYS {action}}
 
 The Files: and Rule: lines are optional — omit if not applicable.
 
 ## Mistakes
 Anything that went wrong, was reverted, or required multiple attempts.
+Only include actual errors, bugs, or failed approaches — not the absence of mistakes.
+If nothing went wrong, write "None" on its own line.
 Format each as:
 **{short description}**: What happened → Why it failed → Correct approach
 Tried: {approaches that were attempted and failed, comma-separated}
-Files: {comma-separated file paths where this applies}
+Files: {comma-separated repo-relative file paths where this applies}
 Rule: {if applicable, an assertion-style constraint: WHEN {context} NEVER/ALWAYS {action}}
 
 The Tried:, Files:, and Rule: lines are optional — omit if not applicable.
@@ -147,10 +152,16 @@ function parseEntryBlock(block: string): ExtractedEntry {
   return { text, files, tried, rule };
 }
 
+/** Strip markdown emphasis/bold markers for comparison */
+function stripMarkdown(text: string): string {
+  return text.replace(/^[_*]+|[_*]+$/g, "").trim();
+}
+
 /** Extract individual decision entries */
 export function extractDecisionEntries(summary: string): ExtractedEntry[] {
   const section = extractNamedSection(summary, "Decisions");
-  if (!section || section.toLowerCase().includes("none")) return [];
+  const nonePatterns = /^(none|n\/a|no significant|no decisions|no key|nothing|not applicable)/i;
+  if (!section || nonePatterns.test(stripMarkdown(section.trim()))) return [];
   const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
   return blocks.map((b) => parseEntryBlock(b.trim()));
 }
@@ -158,7 +169,8 @@ export function extractDecisionEntries(summary: string): ExtractedEntry[] {
 /** Extract individual mistake entries */
 export function extractMistakeEntries(summary: string): ExtractedEntry[] {
   const section = extractNamedSection(summary, "Mistakes");
-  if (!section || section.toLowerCase().includes("none this session")) return [];
+  const nonePatterns = /^(none|n\/a|no mistakes|no errors|no issues|nothing|not applicable)/i;
+  if (!section || nonePatterns.test(stripMarkdown(section.trim()))) return [];
   const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
   return blocks.map((b) => parseEntryBlock(b.trim()));
 }

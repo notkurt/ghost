@@ -6,7 +6,7 @@
  * Usage: bun background.ts <repoRoot> <sessionPath> <sessionId>
  */
 
-import { appendFileSync, existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSION_DIR } from "./paths.js";
 import { indexSession } from "./qmd.js";
@@ -34,6 +34,16 @@ const pidFile = join(repoRoot, SESSION_DIR, ".background.pid");
 const logFile = join(repoRoot, SESSION_DIR, ".background.log");
 writeFileSync(pidFile, String(process.pid));
 
+// Rotate log if it exceeds 50KB
+try {
+  if (existsSync(logFile) && statSync(logFile).size > 50 * 1024) {
+    const lines = readFileSync(logFile, "utf8").split("\n");
+    writeFileSync(logFile, lines.slice(-200).join("\n"));
+  }
+} catch {
+  // Non-critical
+}
+
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}\n`;
   try {
@@ -41,6 +51,21 @@ function log(msg: string): void {
   } catch {
     // Can't even log — truly give up
   }
+}
+
+/** Check if an entry title is junk (non-content like "None", "N/A", etc.) */
+function isJunkEntry(title: string): boolean {
+  const t = title.toLowerCase().trim();
+  return (
+    t === "none" ||
+    t === "n/a" ||
+    t.length < 3 ||
+    t.startsWith("no mistake") ||
+    t.startsWith("no error") ||
+    t.startsWith("no issue") ||
+    t.startsWith("successfully") ||
+    t.startsWith("none ")
+  );
 }
 
 /** Parse **Title**: description from bold-formatted text */
@@ -83,6 +108,7 @@ try {
 
     for (const decision of sections.decisions) {
       const { title, description } = parseTitleDescription(decision.text);
+      if (isJunkEntry(title)) continue;
       const files = decision.files.length > 0 ? decision.files : modifiedFiles.slice(0, 5);
       appendDecision(repoRoot, {
         title,
@@ -102,6 +128,7 @@ try {
 
     for (const mistake of sections.mistakes) {
       const { title, description } = parseTitleDescription(mistake.text);
+      if (isJunkEntry(title)) continue;
       const files = mistake.files.length > 0 ? mistake.files : modifiedFiles.slice(0, 5);
       appendMistake(repoRoot, {
         title,

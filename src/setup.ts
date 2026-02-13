@@ -212,6 +212,15 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   } else if (opts?.genesis && !report.claude.available) {
     console.log(`\n${c.yellow}Skipping genesis — claude CLI required.${c.reset}`);
   }
+
+  // 12. Next-steps guidance
+  console.log(`
+${c.bold}Next steps:${c.reset}
+  Start a Claude Code session — Ghost will capture it automatically.
+  Then try:
+    ${c.cyan}ghost status${c.reset}        Check capture status
+    ${c.cyan}ghost log${c.reset}           View recent sessions
+    ${c.cyan}ghost search <q>${c.reset}    Search past sessions`);
 }
 
 // =============================================================================
@@ -317,6 +326,24 @@ export async function status(root: string): Promise<void> {
     );
   } catch {
     // ignore
+  }
+
+  // Show last background log lines
+  const bgLogFile = join(root, SESSION_DIR, ".background.log");
+  if (existsSync(bgLogFile)) {
+    try {
+      const logContent = readFileSync(bgLogFile, "utf8").trim();
+      if (logContent) {
+        const lines = logContent.split("\n");
+        const lastLines = lines.slice(-5);
+        console.log(`\n${c.bold}Last background run:${c.reset}`);
+        for (const line of lastLines) {
+          console.log(`  ${c.dim}${line}${c.reset}`);
+        }
+      }
+    } catch {
+      // ignore
+    }
   }
 }
 

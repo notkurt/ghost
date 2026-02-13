@@ -182,4 +182,37 @@ Rule: WHEN adding cache layers ALWAYS use Redis`;
     expect(entries[0]!.files).toEqual([]);
     expect(entries[0]!.rule).toBe("");
   });
+
+  test("filters 'None' variations", () => {
+    expect(extractDecisionEntries("## Decisions\nNone")).toEqual([]);
+    expect(extractDecisionEntries("## Decisions\nN/A")).toEqual([]);
+    expect(extractDecisionEntries("## Decisions\nNo significant decisions this session.")).toEqual([]);
+    expect(extractDecisionEntries("## Decisions\nNo key decisions made.")).toEqual([]);
+    expect(extractDecisionEntries("## Decisions\nNot applicable")).toEqual([]);
+    expect(extractDecisionEntries("## Decisions\nNothing")).toEqual([]);
+  });
+});
+
+describe("extractMistakeEntries — junk filtering", () => {
+  test("filters 'None' variations", () => {
+    expect(extractMistakeEntries("## Mistakes\nNone")).toEqual([]);
+    expect(extractMistakeEntries("## Mistakes\nN/A")).toEqual([]);
+    expect(extractMistakeEntries("## Mistakes\nNo mistakes this session.")).toEqual([]);
+    expect(extractMistakeEntries("## Mistakes\nNo errors encountered.")).toEqual([]);
+    expect(extractMistakeEntries("## Mistakes\nNo issues found.")).toEqual([]);
+    expect(extractMistakeEntries("## Mistakes\nNot applicable")).toEqual([]);
+    expect(extractMistakeEntries("## Mistakes\nNothing")).toEqual([]);
+  });
+
+  test("filters bold-formatted None", () => {
+    expect(extractMistakeEntries("## Mistakes\n**None** - documentation task completed successfully")).toEqual([]);
+  });
+
+  test("still captures real mistakes", () => {
+    const summary = `## Mistakes
+**Wrong boundary condition:** Used >= instead of > for threshold.`;
+    const entries = extractMistakeEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.text).toContain("Wrong boundary condition");
+  });
 });

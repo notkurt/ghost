@@ -305,6 +305,33 @@ git push origin refs/notes/ai-sessions
 
 When QMD is installed, Ghost configures an MCP server so Claude Code can search past sessions directly during a conversation. The agent can ask things like "what did we decide about fee calculation?" and get answers from its own history.
 
+## Troubleshooting
+
+**Sessions not being captured**
+- Run `ghost status` to verify hooks are configured
+- Check `.claude/settings.json` has Ghost hooks in the `hooks` section
+- Re-run `ghost enable` to reinstall hooks
+
+**No summaries appearing**
+- Ensure `claude` CLI is installed and on your PATH (`which claude`)
+- Run `ghost logs` to check for background process errors
+- Summaries run in the background after session end — check `ghost status` for background process state
+
+**Search returns no results**
+- Verify QMD is installed: `which qmd`
+- Check collection exists: `ghost status` (look for QMD line)
+- Rebuild the index: `ghost reindex`
+
+**MCP server not working**
+- Confirm `ghost-sessions` is in `.claude/settings.json` under `mcpServers`
+- Re-run `ghost enable` to regenerate the config
+- Try `qmd -c <collection-name> search "test"` to verify QMD works directly
+
+**Background process seems stuck**
+- Check `ghost status` — if it shows "running" for a long time, the PID file may be stale
+- Run `ghost logs` to see what happened
+- Delete `.ai-sessions/.background.pid` to reset the state
+
 ## Architecture
 
 - Runtime: [Bun](https://bun.sh) (starts in ~6ms, critical for hook latency)

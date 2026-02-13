@@ -43,6 +43,7 @@ function parseCLI() {
       force: { type: "boolean", short: "f" },
       genesis: { type: "boolean" },
       last: { type: "boolean" },
+      all: { type: "boolean" },
       decisions: { type: "boolean" },
     },
     allowPositionals: true,
@@ -106,6 +107,10 @@ ${c.bold}Context:${c.reset}
   ${c.cyan}resume${c.reset} [id]          Context handoff from previous session
   ${c.cyan}brief${c.reset} "<desc>"       Generate scoped context brief
   ${c.cyan}mistake${c.reset} "<desc>"     Add to mistake ledger
+
+${c.bold}Debugging:${c.reset}
+  ${c.cyan}logs${c.reset}                 Show last 20 lines of background log
+  ${c.cyan}logs --all${c.reset}           Show full background log
 
 ${c.bold}Analytics:${c.reset}
   ${c.cyan}heatmap${c.reset}              File modification frequency
@@ -530,6 +535,30 @@ if (import.meta.main) {
         const { indexSession } = await import("./qmd.js");
         await indexSession(root);
         console.log("Reindexed.");
+        break;
+      }
+
+      case "logs": {
+        const root = await repoRoot();
+        const { existsSync, readFileSync } = await import("node:fs");
+        const { join } = await import("node:path");
+        const { SESSION_DIR } = await import("./paths.js");
+        const bgLogFile = join(root, SESSION_DIR, ".background.log");
+        if (!existsSync(bgLogFile)) {
+          console.log("No background log found.");
+          break;
+        }
+        const content = readFileSync(bgLogFile, "utf8").trim();
+        if (!content) {
+          console.log("Background log is empty.");
+          break;
+        }
+        if (cli.values.all) {
+          console.log(content);
+        } else {
+          const lines = content.split("\n");
+          console.log(lines.slice(-20).join("\n"));
+        }
         break;
       }
 
