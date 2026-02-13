@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkClaude } from "./deps.js";
 import { completedDir, decisionsPath, knowledgePath, mistakesPath, SESSION_DIR } from "./paths.js";
 import { searchSessions } from "./qmd.js";
 import type { KnowledgeEntry } from "./session.js";
-import { listCompletedSessions, parseKnowledgeEntries } from "./session.js";
+import { appendDecision, appendMistake, deriveArea, listCompletedSessions, parseKnowledgeEntries } from "./session.js";
 
 // =============================================================================
 // Claude CLI Check
@@ -427,4 +427,216 @@ export function shouldRebuildKnowledge(repoRoot: string, threshold: number = 5):
   });
 
   return newSessions.length >= threshold;
+}
+
+// =============================================================================
+// Absorb — Distill CLAUDE.md into Ghost knowledge
+// =============================================================================
+
+const ABSORB_PROMPT = `You are distilling a CLAUDE.md file into Ghost's structured knowledge system.
+
+Read the CLAUDE.md content provided. Categorize everything into four buckets:
+
+1. **claudeMd** — The slimmed-down CLAUDE.md to write back. Keep ONLY:
+   - Hard rules (NEVER/ALWAYS statements)
+   - Project overview (1-2 paragraphs max)
+   - Tech stack (one line)
+   - Commands to run for checks/dev (keep command tables concise)
+   - Essential workflow rules
+   Condense verbose examples to single-line rules. Remove code blocks — just state the rule.
+   Remove any <!-- ghost:knowledge --> blocks entirely (Ghost will re-inject if needed).
+   The result should be a focused, compact project rules file — not documentation.
+
+2. **knowledge** — Architecture descriptions, file structure docs, how systems work, patterns, conventions with context. This becomes the knowledge.md file content. Use markdown sections (## headings). Be thorough but concise.
+
+3. **decisions** — Anything phrased as "we chose X because Y", technology choices, architectural decisions, design choices. Return as an array of objects with:
+   - text: "**Title**: Description of the decision and rationale"
+   - files: array of relevant file paths (can be empty)
+   - rule: assertion rule if one exists (e.g., "ALWAYS use X for Y"), empty string otherwise
+
+4. **mistakes** — Gotchas, pitfalls, "never do X because Y", things that went wrong, common errors. Return as an array of objects with:
+   - text: "**Title**: Description of the mistake/gotcha"
+   - files: array of relevant file paths (can be empty)
+   - tried: array of approaches that failed (can be empty)
+   - rule: assertion rule if one exists (e.g., "NEVER do X"), empty string otherwise
+
+IMPORTANT:
+- Do NOT fabricate content. Only extract what's actually in the CLAUDE.md.
+- If existing Ghost knowledge files are provided, avoid duplicating entries that already exist.
+- Decisions and mistakes should be specific and actionable, not vague.
+
+Return ONLY valid JSON (no markdown fences, no explanation) with this exact shape:
+{
+  "claudeMd": "string with the slim CLAUDE.md content",
+  "knowledge": "string with knowledge.md content",
+  "decisions": [{"text": "...", "files": [...], "rule": "..."}],
+  "mistakes": [{"text": "...", "files": [...], "tried": [...], "rule": "..."}]
+}`;
+
+interface AbsorbResult {
+  claudeMd: string;
+  knowledge: string;
+  decisions: { text: string; files: string[]; rule: string }[];
+  mistakes: { text: string; files: string[]; tried: string[]; rule: string }[];
+}
+
+/** Absorb CLAUDE.md content into Ghost's structured knowledge system */
+export async function absorb(repoRoot: string, opts?: { dryRun?: boolean }): Promise<void> {
+  if (!(await requireClaude("absorb"))) return;
+
+  const claudeMdPath = join(repoRoot, "CLAUDE.md");
+  if (!existsSync(claudeMdPath)) {
+    console.error("No CLAUDE.md found in repository root.");
+    process.exit(1);
+  }
+
+  const claudeMd = readFileSync(claudeMdPath, "utf8");
+  if (!claudeMd.trim()) {
+    console.error("CLAUDE.md is empty.");
+    process.exit(1);
+  }
+
+  // Read existing knowledge files to avoid duplicates
+  const existingKnowledge = existsSync(knowledgePath(repoRoot)) ? readFileSync(knowledgePath(repoRoot), "utf8") : "";
+  const existingDecisions = existsSync(decisionsPath(repoRoot)) ? readFileSync(decisionsPath(repoRoot), "utf8") : "";
+  const existingMistakes = existsSync(mistakesPath(repoRoot)) ? readFileSync(mistakesPath(repoRoot), "utf8") : "";
+
+  const parts: string[] = [`CLAUDE.md CONTENT:\n${claudeMd}`];
+  if (existingKnowledge.trim()) parts.push(`\nEXISTING knowledge.md:\n${existingKnowledge}`);
+  if (existingDecisions.trim()) parts.push(`\nEXISTING decisions.md:\n${existingDecisions}`);
+  if (existingMistakes.trim()) parts.push(`\nEXISTING mistakes.md:\n${existingMistakes}`);
+
+  const input = parts.join("\n");
+
+  console.log("Analyzing CLAUDE.md...");
+
+  let result: AbsorbResult;
+  try {
+    const proc = Bun.spawn(["claude", "-p", ABSORB_PROMPT], {
+      stdin: new TextEncoder().encode(input),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, GHOST_INTERNAL: "1" },
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      console.error("Absorb failed — claude CLI returned non-zero.");
+      return;
+    }
+
+    // Parse JSON from response (strip markdown fences if present)
+    const jsonStr = stdout
+      .replace(/^```json?\n?/, "")
+      .replace(/\n?```$/, "")
+      .trim();
+    result = JSON.parse(jsonStr) as AbsorbResult;
+  } catch (err) {
+    console.error(`Absorb failed: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+
+  // Print summary
+  const decisionCount = result.decisions.length;
+  const mistakeCount = result.mistakes.length;
+  const hasKnowledge = result.knowledge.trim().length > 0;
+  const originalLines = claudeMd.split("\n").length;
+  const newLines = result.claudeMd.split("\n").length;
+
+  console.log(`\nExtracted:`);
+  console.log(`  ${decisionCount} decision(s)`);
+  console.log(`  ${mistakeCount} mistake(s)`);
+  console.log(`  ${hasKnowledge ? "Architecture/conventions content for knowledge.md" : "No knowledge content"}`);
+  console.log(`  CLAUDE.md: ${originalLines} → ${newLines} lines`);
+
+  if (opts?.dryRun) {
+    console.log("\n--- Dry run: no files written ---");
+    if (decisionCount > 0) {
+      console.log("\nDecisions that would be added:");
+      for (const d of result.decisions) {
+        console.log(`  - ${d.text.slice(0, 100)}`);
+      }
+    }
+    if (mistakeCount > 0) {
+      console.log("\nMistakes that would be added:");
+      for (const m of result.mistakes) {
+        console.log(`  - ${m.text.slice(0, 100)}`);
+      }
+    }
+    return;
+  }
+
+  // Ensure session dir exists
+  mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
+
+  // Backup original CLAUDE.md
+  const backupPath = `${claudeMdPath}.pre-absorb`;
+  copyFileSync(claudeMdPath, backupPath);
+  console.log(`\nBacked up CLAUDE.md → CLAUDE.md.pre-absorb`);
+
+  // Write slim CLAUDE.md
+  writeFileSync(claudeMdPath, `${result.claudeMd.trimEnd()}\n`);
+  console.log("Wrote slim CLAUDE.md");
+
+  // Write knowledge
+  if (hasKnowledge) {
+    const header = `_Auto-generated by Ghost (absorb). Last updated: ${new Date().toISOString().slice(0, 10)}_\n\n`;
+    if (existingKnowledge.trim()) {
+      // Append to existing knowledge
+      writeFileSync(knowledgePath(repoRoot), `${existingKnowledge.trimEnd()}\n\n${result.knowledge.trim()}\n`);
+    } else {
+      writeFileSync(knowledgePath(repoRoot), `${header}${result.knowledge.trim()}\n`);
+    }
+    console.log("Updated knowledge.md");
+  }
+
+  // Append decisions
+  const today = new Date().toISOString().slice(0, 10);
+  for (const d of result.decisions) {
+    const { title, description } = parseAbsorbText(d.text);
+    appendDecision(repoRoot, {
+      title,
+      description,
+      sessionId: "absorb",
+      commitSha: "",
+      files: d.files,
+      area: d.files.length > 0 ? deriveArea(d.files) : "general",
+      date: today,
+      tried: [],
+      rule: d.rule,
+    });
+  }
+  if (decisionCount > 0) console.log(`Appended ${decisionCount} decision(s) to decisions.md`);
+
+  // Append mistakes
+  for (const m of result.mistakes) {
+    const { title, description } = parseAbsorbText(m.text);
+    appendMistake(repoRoot, {
+      title,
+      description,
+      sessionId: "absorb",
+      commitSha: "",
+      files: m.files,
+      area: m.files.length > 0 ? deriveArea(m.files) : "general",
+      date: today,
+      tried: m.tried || [],
+      rule: m.rule,
+    });
+  }
+  if (mistakeCount > 0) console.log(`Appended ${mistakeCount} mistake(s) to mistakes.md`);
+
+  console.log("\nDone. Review the changes and commit when satisfied.");
+}
+
+/** Parse "**Title**: description" format from absorb results */
+function parseAbsorbText(text: string): { title: string; description: string } {
+  const boldMatch = text.match(/^\*\*(.+?)\*\*:\s*([\s\S]*)$/);
+  if (boldMatch) {
+    return { title: boldMatch[1]!.trim(), description: boldMatch[2]!.trim() };
+  }
+  const dotIdx = text.indexOf(". ");
+  if (dotIdx > 0) {
+    return { title: text.slice(0, dotIdx), description: text.slice(dotIdx + 2).trim() };
+  }
+  return { title: text, description: "" };
 }

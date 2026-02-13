@@ -6,49 +6,24 @@ Ghost non-blockingly records Claude Code sessions as markdown, attaches them to 
 
 ## How It Works
 
-Ghost installs as a set of [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that fire on session start, prompt submit, file write, turn completion, and session end. Every hook exits in under 100ms. Heavy work (AI summarization, git notes, QMD indexing) runs in a detached background process after the session ends.
+Ghost installs as a set of [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks). During a session, hooks fire on prompt submit, file write, and turn completion — each exits in under 100ms so you never notice them. They append to a markdown file in `.ai-sessions/active/` that captures everything: your prompts, which files were modified, and when each turn finished.
 
-Sessions are stored as human-readable markdown in `.ai-sessions/completed/` (gitignored, local only), with YAML frontmatter for structured metadata. Git notes attach session context directly to commits. QMD exposes session history as an MCP server so Claude Code can search past reasoning within the current project. Secrets are automatically redacted before content reaches disk.
+When the session ends, Ghost moves the file to `.ai-sessions/completed/`, redacts secrets, and forks a background process. That process calls `claude -p` to summarize the session, extracts decisions and mistakes into their own ledgers, attaches a git note to HEAD, and indexes the session into QMD for search. All of this happens after your terminal is free.
 
-```mermaid
-flowchart TB
-    subgraph during["During Session (hooks, <100ms each)"]
-        CC["Claude Code"] -->|SessionStart| SS["Create session file"]
-        CC -->|UserPromptSubmit| PR["Record prompt"]
-        CC -->|PostToolUse| FW["Record file changes"]
-        CC -->|Stop| TD["Record turn delimiter"]
-        SS & PR & FW & TD --> AF[".ai-sessions/active/"]
-    end
+On the next session start, Ghost checks for a recent session on the same branch. If it finds one, it injects context — what you were working on, open items, key decisions, and known pitfalls — so the agent picks up where you left off. Mistakes and decisions are scored by file overlap with your current changes, so you only see what's relevant.
 
-    subgraph after["Session End (background, async)"]
-        CC -->|SessionEnd| FIN["Finalize & redact secrets"]
-        FIN --> COMP[".ai-sessions/completed/"]
-        COMP --> SUM["AI summarize via claude -p"]
-        SUM --> EXTRACT["Extract tags, decisions, mistakes"]
-        EXTRACT --> GN["Attach git note to HEAD"]
-        EXTRACT --> QMD["Index into QMD collection"]
-    end
+Multiple concurrent sessions are supported. Each Claude Code session is tracked independently via a session map, so two sessions in the same repo write to separate files without interfering.
 
-    subgraph next["Next Session"]
-        SS2["SessionStart"] -->|warm resume| COMP
-        SS2 -->|inject pitfalls| MIS[".ai-sessions/mistakes.md"]
-        QMD -->|MCP server| SEARCH["Agent searches past sessions"]
-    end
+Everything is stored locally in `.ai-sessions/` (gitignored by default):
 
-    style during fill:#1a1a2e,stroke:#4a4a6a,color:#e0e0e0
-    style after fill:#16213e,stroke:#4a4a6a,color:#e0e0e0
-    style next fill:#0f3460,stroke:#4a4a6a,color:#e0e0e0
-```
+- `active/` — in-progress session files (one per running session)
+- `completed/` — finalized session markdown with summaries
+- `mistakes.md` — mistake ledger, auto-extracted from sessions or added manually
+- `decisions.md` — decision log with context and reasoning
+- `knowledge.md` — auto-generated project knowledge base
+- `tags.json` — tag-to-session index for filtering
 
-```
-.ai-sessions/            (gitignored, local only)
-  active/                 Current in-progress session
-  completed/              Finalized session markdown files
-  knowledge.md            Auto-generated project knowledge base
-  mistakes.md             Mistake ledger (negative knowledge)
-  decisions.md            Decision log (ADR-lite)
-  tags.json               Tag -> session ID index
-```
+Git notes live on `refs/notes/ai-sessions`. QMD collections are named `ghost-<repo-name>`. No data leaves your machine.
 
 ## Requirements
 
@@ -197,6 +172,8 @@ area:cart, fees, type:refactor
 | `ghost knowledge inject` | Append knowledge base to CLAUDE.md |
 | `ghost knowledge show` | Print current knowledge base |
 | `ghost knowledge diff` | Show current knowledge base (rebuild to update) |
+| `ghost absorb` | Distill CLAUDE.md into Ghost knowledge files |
+| `ghost absorb --dry-run` | Preview extraction without writing files |
 | `ghost edit knowledge` | Open knowledge base for manual editing |
 | `ghost edit mistakes` | Open mistake ledger for manual editing |
 | `ghost edit decisions` | Open decision log for manual editing |
@@ -257,6 +234,15 @@ After every N sessions (default 5), Ghost can rebuild a project knowledge base t
 ```bash
 ghost knowledge build    # Rebuild now
 ghost knowledge inject   # Append to CLAUDE.md so the agent sees it
+```
+
+### Absorb
+
+CLAUDE.md files tend to grow massive over time with verbose examples, architecture docs, and embedded knowledge. `ghost absorb` reads your CLAUDE.md, uses Claude to extract and categorize the content, moves knowledge into Ghost's structured files (decisions.md, mistakes.md, knowledge.md), and writes back a slim CLAUDE.md with just the essential rules.
+
+```bash
+ghost absorb --dry-run   # Preview what would be extracted
+ghost absorb             # Extract and write (backs up to CLAUDE.md.pre-absorb)
 ```
 
 ### Mistake Ledger

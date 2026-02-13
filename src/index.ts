@@ -45,6 +45,7 @@ function parseCLI() {
       last: { type: "boolean" },
       all: { type: "boolean" },
       decisions: { type: "boolean" },
+      "dry-run": { type: "boolean" },
     },
     allowPositionals: true,
     strict: false,
@@ -96,6 +97,7 @@ ${c.bold}Knowledge:${c.reset}
   ${c.cyan}knowledge${c.reset} show       Print current knowledge base
   ${c.cyan}knowledge${c.reset} diff       Show changes since last build
   ${c.cyan}genesis${c.reset}              Build initial knowledge base from codebase
+  ${c.cyan}absorb${c.reset}               Distill CLAUDE.md into Ghost knowledge files
   ${c.cyan}edit${c.reset} <file>          Edit knowledge, mistakes, or decisions
   ${c.cyan}sync${c.reset}                 Sync shared knowledge via git orphan branch
 
@@ -128,7 +130,8 @@ ${c.bold}Options:${c.reset}
   --last              Use most recent session
   --decisions         Scope to decision log
   --force, -f         Force operation (auto-install deps)
-  --genesis           Build initial knowledge base on enable`);
+  --genesis           Build initial knowledge base on enable
+  --dry-run           Preview changes without writing (absorb)`);
 }
 
 // =============================================================================
@@ -497,6 +500,13 @@ if (import.meta.main) {
         } else {
           console.log(filePath);
         }
+        break;
+      }
+
+      case "absorb": {
+        const root = await repoRoot();
+        const { absorb: absorbCmd } = await import("./knowledge.js");
+        await absorbCmd(root, { dryRun: !!cli.values["dry-run"] });
         break;
       }
 
