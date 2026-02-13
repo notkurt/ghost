@@ -110,7 +110,9 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
 >
 > **Before exploring the codebase**, search Ghost for existing context. Past sessions contain architecture
 > decisions, dead ends, and reasoning that raw code search won't reveal. Check Ghost first, then grep.
-> Use the \`ghost-sessions\` MCP tool, or CLI: \`ghost search <query>\`, \`ghost log\`, \`ghost decisions\`.`,
+>
+> **Ghost commands:** \`ghost search <query>\`, \`ghost show <id>\` (read session),
+> \`ghost log\`, \`ghost decisions\`. MCP tool: \`ghost-sessions\`.`,
   );
 
   if (parts.length > 0) {

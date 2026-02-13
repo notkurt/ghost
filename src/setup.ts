@@ -133,19 +133,26 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   const settings = readSettings(settingsPath);
   mergeHooks(settings, GHOST_HOOKS.hooks);
 
-  // 6. Add QMD MCP server config (only if qmd is available)
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+
+  // 6. Add QMD MCP server config to .mcp.json (only if qmd is available)
   const name = await collectionName(root);
   if (report.qmd.available) {
-    if (!settings.mcpServers) settings.mcpServers = {};
-    settings.mcpServers["ghost-sessions"] = {
+    const mcpPath = join(root, ".mcp.json");
+    const mcpConfig = readSettings(mcpPath);
+    if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
+    mcpConfig.mcpServers["ghost-sessions"] = {
+      type: "stdio",
       command: "qmd",
       args: ["-c", name, "mcp"],
     };
+    writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`);
   }
 
-  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  // 7. Inject Ghost header into CLAUDE.md
+  injectClaudeHeader(root);
 
-  // 7. Install git post-commit hook
+  // 8. Install git post-commit hook
   const hooksDir = join(root, ".git", "hooks");
   mkdirSync(hooksDir, { recursive: true });
   const postCommitPath = join(hooksDir, "post-commit");
@@ -161,13 +168,13 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   const { chmod } = await import("node:fs/promises");
   await chmod(postCommitPath, 0o755);
 
-  // 8. Create initial QMD collection (if available)
+  // 9. Create initial QMD collection (if available)
   let qmdOk = false;
   if (report.qmd.available) {
     qmdOk = await createCollection(root);
   }
 
-  // 9. Report results
+  // 10. Report results
   console.log(`\n${c.green}Ghost enabled.${c.reset}`);
   console.log(`  ${c.bold}Session dir:${c.reset}  ${SESSION_DIR}/`);
   console.log(`  ${c.bold}Hooks:${c.reset}        .claude/settings.json`);
@@ -186,7 +193,7 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`  ${c.bold}Summarize:${c.reset}    ${c.yellow}disabled${c.reset} (claude CLI not found)`);
   }
 
-  // 10. Initialize shared knowledge branch and pull team knowledge
+  // 11. Initialize shared knowledge branch and pull team knowledge
   try {
     const { initSharedBranch, pullShared } = await import("./sync.js");
     const branchOk = await initSharedBranch(root);
@@ -200,7 +207,7 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.yellow}(skipped)${c.reset}`);
   }
 
-  // 11. Optional genesis — build initial knowledge base from codebase
+  // 12. Optional genesis — build initial knowledge base from codebase
   if (opts?.genesis && report.claude.available) {
     console.log("");
     const { genesis } = await import("./knowledge.js");
@@ -213,7 +220,7 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`\n${c.yellow}Skipping genesis — claude CLI required.${c.reset}`);
   }
 
-  // 12. Next-steps guidance
+  // 13. Next-steps guidance
   console.log(`
 ${c.bold}Next steps:${c.reset}
   Start a Claude Code session — Ghost will capture it automatically.
@@ -257,15 +264,24 @@ export async function disable(root: string): Promise<void> {
     }
   }
 
-  // Remove ghost MCP server
-  if (settings.mcpServers?.["ghost-sessions"]) {
-    delete settings.mcpServers["ghost-sessions"];
-    if (Object.keys(settings.mcpServers).length === 0) {
-      delete settings.mcpServers;
+  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+
+  // Remove ghost MCP server from .mcp.json
+  const mcpPath = join(root, ".mcp.json");
+  if (existsSync(mcpPath)) {
+    const mcpConfig = readSettings(mcpPath);
+    if (mcpConfig.mcpServers?.["ghost-sessions"]) {
+      delete mcpConfig.mcpServers["ghost-sessions"];
+      if (Object.keys(mcpConfig.mcpServers).length === 0) {
+        delete mcpConfig.mcpServers;
+      }
+      writeFileSync(mcpPath, `${JSON.stringify(mcpConfig, null, 2)}\n`);
     }
   }
 
-  writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
+  // Remove Ghost header from CLAUDE.md
+  removeClaudeHeader(root);
+
   console.log("Ghost disabled. Session files preserved in .ai-sessions/");
 }
 
@@ -417,6 +433,59 @@ function ensureGitignored(root: string): void {
     appendFileSync(gitignorePath, "\n# Ghost session data (local only)\n.ai-sessions/\n");
   } else {
     writeFileSync(gitignorePath, "# Ghost session data (local only)\n.ai-sessions/\n");
+  }
+}
+
+// =============================================================================
+// CLAUDE.md Header
+// =============================================================================
+
+const GHOST_HEADER_SENTINEL = "<!-- ghost:header -->";
+
+const GHOST_HEADER = `${GHOST_HEADER_SENTINEL}
+## Ghost — AI Session Memory
+
+**Before exploring the codebase**, check Ghost for existing context from past sessions.
+Past sessions contain architecture decisions, dead ends, and reasoning that raw code search won't reveal.
+
+| Command | Purpose |
+|---------|---------|
+| \`ghost search <query>\` | Semantic search across past sessions |
+| \`ghost show <session-id>\` | Read a specific session |
+| \`ghost log\` | Recent sessions with summaries |
+| \`ghost decisions\` | Decision log |
+
+Also available as MCP tool: \`ghost-sessions\`
+${GHOST_HEADER_SENTINEL}`;
+
+/** Inject or replace Ghost header at the top of CLAUDE.md */
+function injectClaudeHeader(root: string): void {
+  const claudeMdPath = join(root, "CLAUDE.md");
+  if (existsSync(claudeMdPath)) {
+    let content = readFileSync(claudeMdPath, "utf8");
+    const headerRe = new RegExp(`${GHOST_HEADER_SENTINEL}[\\s\\S]*?${GHOST_HEADER_SENTINEL}\\n*`);
+    if (headerRe.test(content)) {
+      // Replace existing header
+      content = content.replace(headerRe, `${GHOST_HEADER}\n\n`);
+    } else {
+      // Prepend header
+      content = `${GHOST_HEADER}\n\n${content}`;
+    }
+    writeFileSync(claudeMdPath, content);
+  } else {
+    writeFileSync(claudeMdPath, `${GHOST_HEADER}\n`);
+  }
+}
+
+/** Remove Ghost header from CLAUDE.md */
+function removeClaudeHeader(root: string): void {
+  const claudeMdPath = join(root, "CLAUDE.md");
+  if (!existsSync(claudeMdPath)) return;
+  let content = readFileSync(claudeMdPath, "utf8");
+  const headerRe = new RegExp(`${GHOST_HEADER_SENTINEL}[\\s\\S]*?${GHOST_HEADER_SENTINEL}\\n*`);
+  if (headerRe.test(content)) {
+    content = content.replace(headerRe, "");
+    writeFileSync(claudeMdPath, content);
   }
 }
 

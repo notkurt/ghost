@@ -88,7 +88,7 @@ ${c.bold}Session hooks${c.reset} ${c.dim}(called by Claude Code):${c.reset}
 ${c.bold}Search & Browse:${c.reset}
   ${c.cyan}search${c.reset} <query>       Search sessions via QMD
   ${c.cyan}log${c.reset}                  List recent sessions
-  ${c.cyan}show${c.reset} <commit>        Show session note for a commit
+  ${c.cyan}show${c.reset} <id|commit>     Show session by ID or commit note
   ${c.cyan}decisions${c.reset}            Show decision log
 
 ${c.bold}Knowledge:${c.reset}
@@ -336,17 +336,33 @@ if (import.meta.main) {
       }
 
       case "show": {
-        const sha = cli.args[0];
-        if (!sha) {
-          console.error("Usage: ghost show <commit-sha>");
+        const arg = cli.args[0];
+        if (!arg) {
+          console.error("Usage: ghost show <commit-sha|session-id>");
           process.exit(1);
         }
-        const { showNote } = await import("./git.js");
-        const note = await showNote(sha);
-        if (note) {
-          console.log(note);
+        // Check if arg is a session ID (e.g. 2025-06-15-a1b2c3d4)
+        if (/^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/.test(arg)) {
+          const root = await repoRoot();
+          const { existsSync, readFileSync } = await import("node:fs");
+          const { completedSessionPath, sessionFilePath } = await import("./paths.js");
+          const completedPath = completedSessionPath(root, arg);
+          const activePath = sessionFilePath(root, arg);
+          if (existsSync(completedPath)) {
+            console.log(readFileSync(completedPath, "utf8"));
+          } else if (existsSync(activePath)) {
+            console.log(readFileSync(activePath, "utf8"));
+          } else {
+            console.log(`No session found for ${arg}.`);
+          }
         } else {
-          console.log("No session note found for this commit.");
+          const { showNote } = await import("./git.js");
+          const note = await showNote(arg);
+          if (note) {
+            console.log(note);
+          } else {
+            console.log("No session note found for this commit.");
+          }
         }
         break;
       }
