@@ -156,11 +156,11 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   const hooksDir = join(root, ".git", "hooks");
   mkdirSync(hooksDir, { recursive: true });
   const postCommitPath = join(hooksDir, "post-commit");
-  const hookContent = "#!/bin/sh\nghost checkpoint &\n";
+  const hookContent = '#!/bin/sh\nexport PATH="$HOME/.bun/bin:$PATH"\nghost checkpoint &\n';
   if (existsSync(postCommitPath)) {
     const existing = readFileSync(postCommitPath, "utf8");
     if (!existing.includes("ghost checkpoint")) {
-      writeFileSync(postCommitPath, `${existing.trimEnd()}\nghost checkpoint &\n`);
+      writeFileSync(postCommitPath, `${existing.trimEnd()}\nexport PATH="$HOME/.bun/bin:$PATH"\nghost checkpoint &\n`);
     }
   } else {
     writeFileSync(postCommitPath, hookContent);

@@ -314,7 +314,7 @@ export function finalizeSession(repoRoot: string, claudeSessionId?: string): { p
 // Git Notes Checkpoint
 // =============================================================================
 
-/** Attach the most recent completed session as a git note to HEAD */
+/** Attach the most recent completed session as a git note to the relevant commit */
 export async function checkpoint(repoRoot: string): Promise<void> {
   const idPath = currentIdPath(repoRoot);
   let sessionId: string | null = null;
@@ -332,12 +332,21 @@ export async function checkpoint(repoRoot: string): Promise<void> {
 
   if (!sessionId) return;
 
-  const compPath = completedSessionPath(repoRoot, sessionId);
-  if (!existsSync(compPath)) return;
+  // Prefer completed session, fall back to active
+  let sessionPath = completedSessionPath(repoRoot, sessionId);
+  if (!existsSync(sessionPath)) {
+    sessionPath = sessionFilePath(repoRoot, sessionId);
+  }
+  if (!existsSync(sessionPath)) return;
 
   try {
-    const sha = await headSha();
-    await addNoteFromFile(compPath, sha);
+    // Use base_commit from frontmatter so the note lands on the commit
+    // where the session started, not just whatever HEAD is now
+    const content = readFileSync(sessionPath, "utf8");
+    const { frontmatter } = parseFrontmatter(content);
+    const baseCommit = frontmatter.base_commit as string | undefined;
+    const sha = baseCommit && baseCommit !== "none" ? baseCommit : await headSha();
+    await addNoteFromFile(sessionPath, sha);
   } catch {
     // Silently fail — non-blocking
   }
