@@ -108,8 +108,9 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
 > per-session. Writing to CLAUDE.md bypasses Ghost's relevance scoring and creates stale, bloated context.
 > If asked to document something, put it where it belongs: code comments, README, or dedicated docs.
 >
-> **Search past sessions:** Use the \`ghost-sessions\` MCP tool to search decisions, mistakes, and past
-> reasoning. CLI: \`ghost search <query>\`, \`ghost log\`, \`ghost decisions\`.`,
+> **Before exploring the codebase**, search Ghost for existing context. Past sessions contain architecture
+> decisions, dead ends, and reasoning that raw code search won't reveal. Check Ghost first, then grep.
+> Use the \`ghost-sessions\` MCP tool, or CLI: \`ghost search <query>\`, \`ghost log\`, \`ghost decisions\`.`,
   );
 
   if (parts.length > 0) {
