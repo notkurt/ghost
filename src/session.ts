@@ -179,12 +179,15 @@ export function appendPrompt(repoRoot: string, claudeSessionIdOrPrompt: string, 
   if (!path) return;
 
   // Dedup: skip if last recorded prompt is identical
+  // Compare first line only — multiline prompts are stored as "> first line\nrest..."
+  // so extracting the full prompt back from the file isn't reliable
   if (existsSync(path)) {
     const content = readFileSync(path, "utf8");
     const lastPrompt = content.match(/^> (.+)$/gm);
     if (lastPrompt && lastPrompt.length > 0) {
       const lastText = lastPrompt[lastPrompt.length - 1]!.slice(2); // strip "> "
-      if (lastText === prompt) return;
+      const firstLine = prompt.split("\n")[0]!;
+      if (lastText === firstLine || lastText === prompt) return;
     }
   }
 
