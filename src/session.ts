@@ -91,10 +91,21 @@ export function getPromptCount(repoRoot: string): number {
 // Session Appenders
 // =============================================================================
 
-/** Append a user prompt to the active session */
+/** Append a user prompt to the active session (deduplicates consecutive identical prompts) */
 export function appendPrompt(repoRoot: string, promptText: string): void {
   const path = getActiveSessionPath(repoRoot);
   if (!path) return;
+
+  // Dedup: skip if last recorded prompt is identical
+  if (existsSync(path)) {
+    const content = readFileSync(path, "utf8");
+    const lastPrompt = content.match(/^> (.+)$/gm);
+    if (lastPrompt && lastPrompt.length > 0) {
+      const lastText = lastPrompt[lastPrompt.length - 1]!.slice(2); // strip "> "
+      if (lastText === promptText) return;
+    }
+  }
+
   const n = getPromptCount(repoRoot) + 1;
   const block = `\n## Prompt ${n}\n> ${promptText}\n`;
   appendFileSync(path, block);
