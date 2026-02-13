@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { extractSections } from "./summarize.js";
+import { extractDecisionEntries, extractMistakeEntries, extractSections } from "./summarize.js";
 
 describe("extractSections", () => {
   const fullSummary = `## Intent
@@ -12,10 +12,15 @@ Migrate cart fee system from fixed dollar amounts to percentage-based with a cap
 
 ## Decisions
 **Percentage with hard cap over tiered:** Client wanted flexible fees. Chose percentage with $50 cap — simpler.
+Files: src/cart/fees.ts, src/cart/types.ts
 **Keep backward compat:** Default strategy to 'percentage' if unset in existing data.
+Files: src/cart/fees.ts
 
 ## Mistakes
 **Wrong boundary condition:** Used >= instead of > for $500 threshold → caused double-cap. Fixed to strict >.
+Tried: Using >= comparison, Rounding before comparison
+Files: src/cart/fees.ts
+Rule: WHEN modifying src/cart/fees.ts ALWAYS use strict > for threshold comparisons
 
 ## Open Items
 - Need to update metafield sync to include fee strategy
@@ -33,17 +38,24 @@ area:cart, fees, type:refactor, percentage-fees`;
     expect(sections.tags.length).toBe(4);
   });
 
-  test("extracts decisions", () => {
+  test("extracts decisions as ExtractedEntry objects", () => {
     const sections = extractSections(fullSummary);
     expect(sections.decisions.length).toBe(2);
-    expect(sections.decisions[0]).toContain("Percentage with hard cap");
-    expect(sections.decisions[1]).toContain("Keep backward compat");
+    expect(sections.decisions[0]!.text).toContain("Percentage with hard cap");
+    expect(sections.decisions[0]!.files).toEqual(["src/cart/fees.ts", "src/cart/types.ts"]);
+    expect(sections.decisions[1]!.text).toContain("Keep backward compat");
+    expect(sections.decisions[1]!.files).toEqual(["src/cart/fees.ts"]);
   });
 
-  test("extracts mistakes", () => {
+  test("extracts mistakes as ExtractedEntry objects", () => {
     const sections = extractSections(fullSummary);
     expect(sections.mistakes.length).toBe(1);
-    expect(sections.mistakes[0]).toContain("Wrong boundary condition");
+    expect(sections.mistakes[0]!.text).toContain("Wrong boundary condition");
+    expect(sections.mistakes[0]!.files).toEqual(["src/cart/fees.ts"]);
+    expect(sections.mistakes[0]!.tried).toEqual(["Using >= comparison", "Rounding before comparison"]);
+    expect(sections.mistakes[0]!.rule).toBe(
+      "WHEN modifying src/cart/fees.ts ALWAYS use strict > for threshold comparisons",
+    );
   });
 
   test("extracts intent", () => {
@@ -102,5 +114,72 @@ test, debug`;
     expect(sections.tags).toContain("debug");
     expect(sections.decisions).toEqual([]);
     expect(sections.changes).toBe("");
+  });
+});
+
+describe("extractMistakeEntries", () => {
+  test("returns objects with text, files, tried, rule", () => {
+    const summary = `## Mistakes
+**Timeout on batch:** Batched 100 mutations → timeout.
+Tried: Batching 100, Single large query
+Files: src/sync/deploy.ts, src/sync/batch.ts
+Rule: WHEN modifying src/sync/deploy.ts NEVER batch more than 25 mutations`;
+
+    const entries = extractMistakeEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.text).toContain("Timeout on batch");
+    expect(entries[0]!.files).toEqual(["src/sync/deploy.ts", "src/sync/batch.ts"]);
+    expect(entries[0]!.tried).toEqual(["Batching 100", "Single large query"]);
+    expect(entries[0]!.rule).toBe("WHEN modifying src/sync/deploy.ts NEVER batch more than 25 mutations");
+  });
+
+  test("handles missing Files/Tried/Rule lines gracefully", () => {
+    const summary = `## Mistakes
+**Simple mistake:** Something went wrong.`;
+
+    const entries = extractMistakeEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.text).toContain("Simple mistake");
+    expect(entries[0]!.files).toEqual([]);
+    expect(entries[0]!.tried).toEqual([]);
+    expect(entries[0]!.rule).toBe("");
+  });
+
+  test("handles multiple entries in same section", () => {
+    const summary = `## Mistakes
+**First mistake:** Description A.
+Files: src/a.ts
+**Second mistake:** Description B.
+Tried: Approach X, Approach Y`;
+
+    const entries = extractMistakeEntries(summary);
+    expect(entries.length).toBe(2);
+    expect(entries[0]!.files).toEqual(["src/a.ts"]);
+    expect(entries[1]!.tried).toEqual(["Approach X", "Approach Y"]);
+  });
+});
+
+describe("extractDecisionEntries", () => {
+  test("returns objects with text, files, tried, rule", () => {
+    const summary = `## Decisions
+**Use Redis for caching:** Needed fast reads → chose Redis over Memcached.
+Files: src/cache/redis.ts, src/cache/index.ts
+Rule: WHEN adding cache layers ALWAYS use Redis`;
+
+    const entries = extractDecisionEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.text).toContain("Use Redis for caching");
+    expect(entries[0]!.files).toEqual(["src/cache/redis.ts", "src/cache/index.ts"]);
+    expect(entries[0]!.rule).toBe("WHEN adding cache layers ALWAYS use Redis");
+  });
+
+  test("handles entries without metadata lines", () => {
+    const summary = `## Decisions
+**Simple decision:** Just decided something.`;
+
+    const entries = extractDecisionEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.files).toEqual([]);
+    expect(entries[0]!.rule).toBe("");
   });
 });

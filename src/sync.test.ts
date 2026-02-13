@@ -135,43 +135,92 @@ describe("readSharedFile / writeSharedFiles", () => {
 // =============================================================================
 
 describe("mergeMistakes", () => {
-  test("deduplicates lines", () => {
+  test("deduplicates legacy lines", () => {
     const remote = "- Don't use X\n- Avoid Y\n";
     const local = "- Avoid Y\n- New mistake\n";
     const result = mergeMistakes(remote, local);
-    expect(result).toBe("- Don't use X\n- Avoid Y\n- New mistake\n");
+    expect(result).toContain("- Don't use X");
+    expect(result).toContain("- Avoid Y");
+    expect(result).toContain("- New mistake");
+    // Only one "Avoid Y"
+    expect(result.match(/Avoid Y/g)?.length).toBe(1);
   });
 
   test("handles empty inputs", () => {
     expect(mergeMistakes("", "")).toBe("");
-    expect(mergeMistakes("", "- a\n")).toBe("- a\n");
-    expect(mergeMistakes("- b\n", "")).toBe("- b\n");
+    expect(mergeMistakes("", "- a\n")).toContain("- a");
+    expect(mergeMistakes("- b\n", "")).toContain("- b");
   });
 
-  test("ignores non-list lines", () => {
-    const remote = "# Header\n- Actual item\nsome text\n";
-    const local = "- Another item\n";
+  test("deduplicates structured entries by title+description", () => {
+    const remote = `### Batch timeout
+Causes timeout.
+<!-- session:2026-02-10-aaaa1111 | files:src/a.ts | area:sync -->
+`;
+    const local = `### Batch timeout
+Causes timeout.
+<!-- session:2026-02-10-bbbb2222 | files:src/a.ts | area:sync -->
+`;
     const result = mergeMistakes(remote, local);
-    expect(result).toBe("- Actual item\n- Another item\n");
+    // Should only appear once
+    expect(result.match(/### Batch timeout/g)?.length).toBe(1);
+  });
+
+  test("preserves legacy lines alongside structured entries", () => {
+    const remote = "- Old legacy mistake\n";
+    const local = `### New structured mistake
+Description here.
+<!-- session:2026-02-10-abcd1234 | files:src/foo.ts | area:foo -->
+`;
+    const result = mergeMistakes(remote, local);
+    expect(result).toContain("- Old legacy mistake");
+    expect(result).toContain("### New structured mistake");
+  });
+
+  test("merges entries from different sessions about different mistakes", () => {
+    const remote = `### Timeout on deploy
+Too many mutations.
+<!-- session:2026-02-10-aaaa1111 | files:src/deploy.ts | area:sync -->
+`;
+    const local = `### Missing idempotency keys
+Retries create duplicates.
+<!-- session:2026-02-11-bbbb2222 | files:src/client.ts | area:client -->
+`;
+    const result = mergeMistakes(remote, local);
+    expect(result).toContain("### Timeout on deploy");
+    expect(result).toContain("### Missing idempotency keys");
   });
 });
 
 describe("mergeDecisions", () => {
-  test("deduplicates blocks", () => {
+  test("deduplicates legacy blocks", () => {
     const remote = "Decision A\nDetails here\n\nDecision B\nMore details";
     const local = "Decision B\nMore details\n\nDecision C\nNew stuff";
     const result = mergeDecisions(remote, local);
-    expect(result).toContain("Decision A\nDetails here");
-    expect(result).toContain("Decision B\nMore details");
-    expect(result).toContain("Decision C\nNew stuff");
+    expect(result).toContain("Decision A");
+    expect(result).toContain("Decision B");
+    expect(result).toContain("Decision C");
     // Count occurrences of "Decision B"
     expect(result.match(/Decision B/g)?.length).toBe(1);
   });
 
   test("handles empty inputs", () => {
     expect(mergeDecisions("", "")).toBe("");
-    expect(mergeDecisions("", "block")).toBe("block\n");
-    expect(mergeDecisions("block", "")).toBe("block\n");
+    expect(mergeDecisions("", "block")).toContain("block");
+    expect(mergeDecisions("block", "")).toContain("block");
+  });
+
+  test("deduplicates structured decision entries", () => {
+    const remote = `### Use Redis
+Better performance.
+<!-- session:2026-02-10-aaaa1111 | files:src/cache.ts | area:cache -->
+`;
+    const local = `### Use Redis
+Better performance.
+<!-- session:2026-02-10-bbbb2222 | files:src/cache.ts | area:cache -->
+`;
+    const result = mergeDecisions(remote, local);
+    expect(result.match(/### Use Redis/g)?.length).toBe(1);
   });
 });
 
@@ -231,7 +280,7 @@ describe("pullShared", () => {
     await pullShared(tmpDir);
 
     const mistakes = readFileSync(join(tmpDir, ".ai-sessions", "mistakes.md"), "utf8");
-    expect(mistakes).toContain("- Don't do X");
+    expect(mistakes).toContain("Don't do X");
   });
 
   test("merges with existing local files", async () => {
@@ -246,8 +295,8 @@ describe("pullShared", () => {
     await pullShared(tmpDir);
 
     const mistakes = readFileSync(join(tmpDir, ".ai-sessions", "mistakes.md"), "utf8");
-    expect(mistakes).toContain("- Remote mistake");
-    expect(mistakes).toContain("- Local mistake");
+    expect(mistakes).toContain("Remote mistake");
+    expect(mistakes).toContain("Local mistake");
   });
 
   test("no-op if branch does not exist", async () => {
@@ -305,7 +354,7 @@ describe("syncKnowledge", () => {
 
     // Verify data is on branch
     const mistakes = await readSharedFile(tmpDir, "mistakes.md");
-    expect(mistakes).toContain("- E2E mistake");
+    expect(mistakes).toContain("E2E mistake");
 
     const tags = await readSharedFile(tmpDir, "tags.json");
     expect(tags).not.toBeNull();
@@ -348,7 +397,7 @@ describe("two-repo sync via bare remote", () => {
     await syncKnowledge(repo2);
 
     const mistakes = readFileSync(join(repo2, ".ai-sessions", "mistakes.md"), "utf8");
-    expect(mistakes).toContain("- Shared team mistake");
+    expect(mistakes).toContain("Shared team mistake");
   });
 
   test("both devs merge without conflict", async () => {
@@ -363,8 +412,8 @@ describe("two-repo sync via bare remote", () => {
     await syncKnowledge(repo2);
 
     const mistakesB = readFileSync(join(repo2, ".ai-sessions", "mistakes.md"), "utf8");
-    expect(mistakesB).toContain("- Mistake from A");
-    expect(mistakesB).toContain("- Mistake from B");
+    expect(mistakesB).toContain("Mistake from A");
+    expect(mistakesB).toContain("Mistake from B");
 
     // Dev A syncs again and gets B's mistake (clear rate-limit so fetch happens)
     try {
@@ -374,7 +423,7 @@ describe("two-repo sync via bare remote", () => {
     }
     await syncKnowledge(repo1);
     const mistakesA = readFileSync(join(repo1, ".ai-sessions", "mistakes.md"), "utf8");
-    expect(mistakesA).toContain("- Mistake from A");
-    expect(mistakesA).toContain("- Mistake from B");
+    expect(mistakesA).toContain("Mistake from A");
+    expect(mistakesA).toContain("Mistake from B");
   });
 });

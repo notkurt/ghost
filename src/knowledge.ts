@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { checkClaude } from "./deps.js";
 import { completedDir, decisionsPath, knowledgePath, mistakesPath, SESSION_DIR } from "./paths.js";
 import { searchSessions } from "./qmd.js";
-import { listCompletedSessions } from "./session.js";
+import type { KnowledgeEntry } from "./session.js";
+import { listCompletedSessions, parseKnowledgeEntries } from "./session.js";
 
 // =============================================================================
 // Claude CLI Check
@@ -37,10 +38,15 @@ Key architectural patterns, file structure, tech stack.
 Coding conventions, naming patterns, testing approaches.
 
 ## Key Decisions
-Important technical decisions with date and reasoning.
+Important technical decisions organized by component area.
+Include file paths so the AI knows exactly where decisions apply.
+If a decision includes an assertion rule, preserve it verbatim.
 
 ## Gotchas
-Known issues, API quirks, things to watch out for.
+Known issues organized by component area.
+Include file paths and dead-end approaches (what was tried and failed).
+If a gotcha includes an assertion rule, preserve it verbatim.
+Deduplicate entries describing the same issue.
 
 ## Patterns That Work
 Proven approaches for common tasks.
@@ -78,7 +84,45 @@ export async function buildKnowledge(repoRoot: string): Promise<void> {
   }
 
   const existing = existsSync(knowledgePath(repoRoot)) ? readFileSync(knowledgePath(repoRoot), "utf8") : "";
-  const input = `${existing ? `EXISTING KNOWLEDGE BASE:\n${existing}\n\n` : ""}NEW SESSION SUMMARIES:\n${summaries.join("\n\n")}`;
+
+  // Build structured knowledge grouped by area
+  const mistakeEntries = parseKnowledgeEntries(
+    existsSync(mistakesPath(repoRoot)) ? readFileSync(mistakesPath(repoRoot), "utf8") : "",
+  );
+  const decisionEntries = parseKnowledgeEntries(
+    existsSync(decisionsPath(repoRoot)) ? readFileSync(decisionsPath(repoRoot), "utf8") : "",
+  );
+
+  const byArea: Record<string, { mistakes: KnowledgeEntry[]; decisions: KnowledgeEntry[] }> = {};
+  for (const e of mistakeEntries) {
+    if (!byArea[e.area]) byArea[e.area] = { mistakes: [], decisions: [] };
+    byArea[e.area]!.mistakes.push(e);
+  }
+  for (const e of decisionEntries) {
+    if (!byArea[e.area]) byArea[e.area] = { mistakes: [], decisions: [] };
+    byArea[e.area]!.decisions.push(e);
+  }
+
+  let structuredInput = "";
+  if (Object.keys(byArea).length > 0) {
+    structuredInput = "\nSTRUCTURED KNOWLEDGE BY AREA:\n";
+    for (const [area, data] of Object.entries(byArea)) {
+      structuredInput += `\n### Area: ${area}\n`;
+      for (const m of data.mistakes) {
+        structuredInput += `- MISTAKE: ${m.title} (files: ${m.files.join(", ")})`;
+        if (m.tried.length) structuredInput += ` [tried: ${m.tried.join(", ")}]`;
+        if (m.rule) structuredInput += ` [RULE: ${m.rule}]`;
+        structuredInput += `\n  ${m.description}\n`;
+      }
+      for (const d of data.decisions) {
+        structuredInput += `- DECISION: ${d.title} (files: ${d.files.join(", ")})`;
+        if (d.rule) structuredInput += ` [RULE: ${d.rule}]`;
+        structuredInput += `\n  ${d.description}\n`;
+      }
+    }
+  }
+
+  const input = `${existing ? `EXISTING KNOWLEDGE BASE:\n${existing}\n\n` : ""}NEW SESSION SUMMARIES:\n${summaries.join("\n\n")}${structuredInput}`;
 
   try {
     const proc = Bun.spawn(["claude", "-p", KNOWLEDGE_PROMPT], {

@@ -11,7 +11,16 @@ import { join } from "node:path";
 import { SESSION_DIR } from "./paths.js";
 import { indexSession } from "./qmd.js";
 import { redactSecrets } from "./redact.js";
-import { addTags, appendDecision, appendMistake, checkpoint } from "./session.js";
+import {
+  addTags,
+  appendDecision,
+  appendMistake,
+  checkpoint,
+  deriveArea,
+  detectCorrections,
+  extractModifiedFiles,
+  parseFrontmatter,
+} from "./session.js";
 import { extractSections, summarize } from "./summarize.js";
 
 const [repoRoot, sessionPath, sessionId] = process.argv.slice(2) as [string, string, string];
@@ -34,6 +43,20 @@ function log(msg: string): void {
   }
 }
 
+/** Parse **Title**: description from bold-formatted text */
+function parseTitleDescription(text: string): { title: string; description: string } {
+  const boldMatch = text.match(/^\*\*(.+?)\*\*:\s*([\s\S]*)$/);
+  if (boldMatch) {
+    return { title: boldMatch[1]!.trim(), description: boldMatch[2]!.trim() };
+  }
+  // Fallback: first sentence as title, rest as description
+  const dotIdx = text.indexOf(". ");
+  if (dotIdx > 0) {
+    return { title: text.slice(0, dotIdx), description: text.slice(dotIdx + 2).trim() };
+  }
+  return { title: text, description: "" };
+}
+
 try {
   log(`Starting background finalization for session ${sessionId}`);
 
@@ -50,17 +73,75 @@ try {
       addTags(repoRoot, sessionId, sections.tags);
       log(`Tagged: ${sections.tags.join(", ")}`);
     }
+
+    // Read session data for context
+    const sessionContent = readFileSync(sessionPath, "utf8");
+    const { frontmatter } = parseFrontmatter(sessionContent);
+    const modifiedFiles = extractModifiedFiles(sessionContent);
+    const commitSha = (frontmatter.base_commit as string) || "unknown";
+    const sessionDate = sessionId.slice(0, 10);
+
     for (const decision of sections.decisions) {
-      appendDecision(repoRoot, decision);
+      const { title, description } = parseTitleDescription(decision.text);
+      const files = decision.files.length > 0 ? decision.files : modifiedFiles.slice(0, 5);
+      appendDecision(repoRoot, {
+        title,
+        description,
+        sessionId,
+        commitSha,
+        files,
+        area: deriveArea(files),
+        date: sessionDate,
+        tried: decision.tried,
+        rule: decision.rule,
+      });
     }
     if (sections.decisions.length > 0) {
       log(`Logged ${sections.decisions.length} decision(s)`);
     }
+
     for (const mistake of sections.mistakes) {
-      appendMistake(repoRoot, mistake);
+      const { title, description } = parseTitleDescription(mistake.text);
+      const files = mistake.files.length > 0 ? mistake.files : modifiedFiles.slice(0, 5);
+      appendMistake(repoRoot, {
+        title,
+        description,
+        sessionId,
+        commitSha,
+        files,
+        area: deriveArea(files),
+        date: sessionDate,
+        tried: mistake.tried,
+        rule: mistake.rule,
+      });
     }
     if (sections.mistakes.length > 0) {
       log(`Logged ${sections.mistakes.length} mistake(s)`);
+    }
+
+    // Auto-detect corrections: files modified in consecutive turns
+    const corrections = detectCorrections(sessionContent);
+    if (corrections.length > 0) {
+      const fileCounts: Record<string, number> = {};
+      for (const c of corrections) {
+        fileCounts[c.file] = (fileCounts[c.file] || 0) + 1;
+      }
+      for (const [file, count] of Object.entries(fileCounts)) {
+        if (count >= 2) {
+          appendMistake(repoRoot, {
+            title: `Repeated modifications to ${file}`,
+            description: `File was modified across multiple consecutive turns — may indicate the AI struggled with this file. Review session ${sessionId} for the correct approach.`,
+            sessionId,
+            commitSha,
+            files: [file],
+            area: deriveArea([file]),
+            date: sessionDate,
+            tried: [],
+            rule: "",
+          });
+          log(`Auto-detected correction pattern for ${file}`);
+        }
+      }
     }
   } else {
     log("Summarization skipped (claude CLI not available or failed)");

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { $ } from "bun";
 import { branchExists, fetchBranch, hasRemote, pushBranch } from "./git.js";
 import { decisionsPath, knowledgePath, lastSyncPath, mistakesPath, sessionDir, tagsPath } from "./paths.js";
+import type { KnowledgeEntry } from "./session.js";
+import { formatKnowledgeEntry, parseKnowledgeEntries } from "./session.js";
 
 // =============================================================================
 // Constants
@@ -113,48 +115,88 @@ export async function writeSharedFiles(root: string, files: Record<string, strin
 // Merge Strategies (pure functions)
 // =============================================================================
 
-/** Mistakes: line-based dedup. Union of `- ` lines, remote first then new local. */
+/** Mistakes: structured entry dedup by title+description, with legacy line support. */
 export function mergeMistakes(remote: string, local: string): string {
-  const remoteLines = remote
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith("- "));
-  const localLines = local
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.startsWith("- "));
+  const remoteEntries = parseKnowledgeEntries(remote);
+  const localEntries = parseKnowledgeEntries(local);
 
   const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const line of [...remoteLines, ...localLines]) {
-    if (!seen.has(line)) {
-      seen.add(line);
-      merged.push(line);
+  const merged: KnowledgeEntry[] = [];
+  for (const entry of [...remoteEntries, ...localEntries]) {
+    const key = `${entry.title.toLowerCase().trim()}|${entry.description.toLowerCase().trim()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(entry);
     }
   }
-  return merged.length > 0 ? `${merged.join("\n")}\n` : "";
+
+  const structured = merged.filter((e) => e.sessionId !== "unknown" || e.files.length > 0);
+  const legacy = merged.filter((e) => e.sessionId === "unknown" && e.files.length === 0);
+
+  let result = "";
+  for (const entry of structured) {
+    result += `${formatKnowledgeEntry(entry)}\n`;
+  }
+  for (const entry of legacy) {
+    result += `- ${entry.title}\n`;
+  }
+  return result || "";
 }
 
-/** Decisions: block-based dedup. Split on double-newline, union by content. */
+/** Decisions: structured entry dedup by title+description, with legacy block support. */
 export function mergeDecisions(remote: string, local: string): string {
-  const split = (text: string) =>
-    text
-      .split(/\n\n+/)
-      .map((b) => b.trim())
-      .filter(Boolean);
+  const remoteEntries = parseKnowledgeEntries(remote);
+  const localEntries = parseKnowledgeEntries(local);
 
-  const remoteBlocks = split(remote);
-  const localBlocks = split(local);
+  // If both sides have no structured entries, fall back to block-based dedup
+  const hasStructured = [...remoteEntries, ...localEntries].some(
+    (e) => e.sessionId !== "unknown" || e.files.length > 0,
+  );
+
+  if (!hasStructured) {
+    // Legacy fallback: block-based dedup
+    const split = (text: string) =>
+      text
+        .split(/\n\n+/)
+        .map((b) => b.trim())
+        .filter(Boolean);
+
+    const remoteBlocks = split(remote);
+    const localBlocks = split(local);
+
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const block of [...remoteBlocks, ...localBlocks]) {
+      if (!seen.has(block)) {
+        seen.add(block);
+        merged.push(block);
+      }
+    }
+    return merged.length > 0 ? `${merged.join("\n\n")}\n` : "";
+  }
 
   const seen = new Set<string>();
-  const merged: string[] = [];
-  for (const block of [...remoteBlocks, ...localBlocks]) {
-    if (!seen.has(block)) {
-      seen.add(block);
-      merged.push(block);
+  const merged: KnowledgeEntry[] = [];
+  for (const entry of [...remoteEntries, ...localEntries]) {
+    const key = `${entry.title.toLowerCase().trim()}|${entry.description.toLowerCase().trim()}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(entry);
     }
   }
-  return merged.length > 0 ? `${merged.join("\n\n")}\n` : "";
+
+  const structured = merged.filter((e) => e.sessionId !== "unknown" || e.files.length > 0);
+  const legacy = merged.filter((e) => e.sessionId === "unknown" && e.files.length === 0);
+
+  let result = "";
+  for (const entry of structured) {
+    result += `${formatKnowledgeEntry(entry)}\n`;
+  }
+  for (const entry of legacy) {
+    // Legacy decisions are multi-line blocks, just write the title
+    result += `${entry.title}\n\n`;
+  }
+  return result || "";
 }
 
 /** Knowledge: local wins. Fall back to remote if local is empty. */

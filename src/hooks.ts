@@ -1,17 +1,23 @@
-import { existsSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import type { PostToolUseInput, SessionEndInput, SessionStartInput, StopInput, UserPromptInput } from "./env.js";
 import { repoRoot } from "./git.js";
+import { completedSessionPath } from "./paths.js";
 import {
   appendFileModification,
   appendPrompt,
   appendTaskNote,
   appendTurnDelimiter,
+  buildCoModGraph,
   createSession,
+  extractModifiedFiles,
   finalizeSession,
   findRecentSession,
   generateContinuityBlock,
   getActiveSessionId,
-  getCondensedMistakes,
+  getCoModifiedFiles,
+  getRelevantDecisions,
+  getRelevantMistakes,
 } from "./session.js";
 
 // =============================================================================
@@ -19,7 +25,7 @@ import {
 // =============================================================================
 
 /**
- * SessionStart: Create session file, inject warm resume context + mistakes.
+ * SessionStart: Create session file, inject warm resume context + relevant knowledge.
  * Returns context string via stdout (Claude sees this).
  */
 export async function handleSessionStart(input: SessionStartInput): Promise<string | undefined> {
@@ -28,7 +34,7 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
 
   const parts: string[] = [];
 
-  // Check for recent session on same branch for warm resume
+  // 1. Check for recent session on same branch for warm resume
   try {
     const recentId = await findRecentSession(root);
     if (recentId) {
@@ -39,16 +45,62 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
     // Non-critical — skip silently
   }
 
-  // Inject condensed mistake ledger
+  // 2. Gather relevant files from git state + previous session
+  let relevantFiles: string[] = [];
   try {
-    const mistakes = getCondensedMistakes(root);
+    const unstaged = execSync("git diff --name-only HEAD", { cwd: root, encoding: "utf8", timeout: 3000 }).trim();
+    const staged = execSync("git diff --name-only --cached", { cwd: root, encoding: "utf8", timeout: 3000 }).trim();
+    relevantFiles = [...new Set([...unstaged.split("\n").filter(Boolean), ...staged.split("\n").filter(Boolean)])];
+  } catch {
+    // No git changes or not in a git repo
+  }
+
+  // Also include previous session's files for continuity
+  try {
+    const recentId = await findRecentSession(root);
+    if (recentId) {
+      const prevPath = completedSessionPath(root, recentId);
+      if (existsSync(prevPath)) {
+        const prevContent = readFileSync(prevPath, "utf8");
+        const prevFiles = extractModifiedFiles(prevContent);
+        relevantFiles = [...new Set([...relevantFiles, ...prevFiles])];
+      }
+    }
+  } catch {
+    // Non-critical
+  }
+
+  // 3. Inject relevant mistakes (scored by file overlap + co-modification)
+  try {
+    const mistakes = getRelevantMistakes(root, relevantFiles);
     if (mistakes) parts.push(mistakes);
   } catch {
     // Non-critical — skip silently
   }
 
+  // 4. Inject relevant decisions
+  try {
+    const decisions = getRelevantDecisions(root, relevantFiles);
+    if (decisions) parts.push(decisions);
+  } catch {
+    // Non-critical — skip silently
+  }
+
+  // 5. Inject co-modified file warnings
+  try {
+    const graph = buildCoModGraph(root);
+    const coMod = getCoModifiedFiles(graph, relevantFiles, 10);
+    if (coMod.length > 0) {
+      parts.push(
+        `> Files frequently modified together with your current changes:\n${coMod.map((f) => `> - ${f}`).join("\n")}\n> Consider reviewing these for side effects.`,
+      );
+    }
+  } catch {
+    // Non-critical — skip silently
+  }
+
   if (parts.length > 0) {
-    return parts.join("\n");
+    return parts.join("\n\n");
   }
   return undefined;
 }

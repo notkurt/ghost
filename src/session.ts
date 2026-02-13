@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import crypto from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -15,6 +16,22 @@ import {
   tagsPath,
 } from "./paths.js";
 import { redactWithBuiltinPatterns } from "./redact.js";
+
+// =============================================================================
+// Knowledge Entry Types
+// =============================================================================
+
+export interface KnowledgeEntry {
+  title: string;
+  description: string;
+  sessionId: string;
+  commitSha: string;
+  files: string[];
+  area: string;
+  date: string;
+  tried: string[];
+  rule: string;
+}
 
 // =============================================================================
 // Session ID Generation
@@ -333,7 +350,7 @@ export function generateContinuityBlock(repoRoot: string, sessionId: string): st
   return block;
 }
 
-/** Get condensed mistakes for session injection */
+/** Get condensed mistakes for session injection (legacy — kept for backward compat) */
 export function getCondensedMistakes(repoRoot: string, maxEntries: number = 5): string | null {
   const path = mistakesPath(repoRoot);
   if (!existsSync(path)) return null;
@@ -353,21 +370,200 @@ export function getCondensedMistakes(repoRoot: string, maxEntries: number = 5): 
 }
 
 // =============================================================================
+// Relevance Scoring
+// =============================================================================
+
+/** Score and rank knowledge entries by relevance to current files */
+export function getRelevantEntries(
+  entries: KnowledgeEntry[],
+  relevantFiles: string[],
+  coModFiles: string[],
+  max: number,
+): KnowledgeEntry[] {
+  if (entries.length === 0) return [];
+
+  const relevantFileSet = new Set(relevantFiles);
+  const coModFileSet = new Set(coModFiles);
+  const relevantArea = deriveArea(relevantFiles);
+  const now = Date.now();
+
+  const scored = entries.map((entry) => {
+    let score = 0;
+
+    // +10 per exact file match
+    for (const f of entry.files) {
+      if (relevantFileSet.has(f)) score += 10;
+    }
+
+    // +5 per co-modification neighbor match
+    for (const f of entry.files) {
+      if (coModFileSet.has(f)) score += 5;
+    }
+
+    // +5 for same area match
+    if (entry.area !== "general" && entry.area === relevantArea) score += 5;
+
+    // +3 recency bonus (decays over 30 days)
+    if (entry.date) {
+      const entryTime = new Date(entry.date).getTime();
+      if (!Number.isNaN(entryTime)) {
+        const daysSince = (now - entryTime) / (1000 * 60 * 60 * 24);
+        score += 3 * Math.max(0, 1 - daysSince / 30);
+      }
+    }
+
+    // +1 baseline for legacy entries (no file info)
+    if (entry.files.length === 0) score += 1;
+
+    // +20 bonus for entries with rules
+    if (entry.rule) score += 20;
+
+    return { entry, score };
+  });
+
+  // Sort by score descending, then by date descending
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.entry.date.localeCompare(a.entry.date);
+  });
+
+  // Staleness check on top 2*max entries
+  const checkCount = Math.min(scored.length, max * 2);
+  for (let i = 0; i < checkCount; i++) {
+    const entry = scored[i]!.entry;
+    if (entry.files.length > 0 && entry.date) {
+      for (const f of entry.files.slice(0, 3)) {
+        try {
+          const log = execSync(`git log --oneline --since="${entry.date}" -- "${f}"`, {
+            encoding: "utf8",
+            timeout: 2000,
+          }).trim();
+          const commitCount = log ? log.split("\n").length : 0;
+          if (commitCount > 10) {
+            scored[i]!.score -= 5;
+            break;
+          }
+        } catch {
+          // Silently skip — may not be in a git repo or file doesn't exist
+        }
+      }
+    }
+  }
+
+  // Re-sort after staleness adjustment
+  scored.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return b.entry.date.localeCompare(a.entry.date);
+  });
+
+  // If nothing scores above 0, fall back to most recent
+  const aboveZero = scored.filter((s) => s.score > 0);
+  if (aboveZero.length === 0) {
+    return entries
+      .filter((e) => e.date)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, max);
+  }
+
+  return aboveZero.slice(0, max).map((s) => s.entry);
+}
+
+/** Get relevant mistakes formatted for session injection */
+export function getRelevantMistakes(root: string, relevantFiles: string[], max: number = 10): string | null {
+  const path = mistakesPath(root);
+  if (!existsSync(path)) return null;
+  const content = readFileSync(path, "utf8").trim();
+  if (!content) return null;
+
+  const entries = parseKnowledgeEntries(content);
+  if (entries.length === 0) return null;
+
+  const graph = buildCoModGraph(root);
+  const coModFiles = getCoModifiedFiles(graph, relevantFiles);
+  const relevant = getRelevantEntries(entries, relevantFiles, coModFiles, max);
+  if (relevant.length === 0) return null;
+
+  // Separate rules from regular entries
+  const rules = relevant.filter((e) => e.rule);
+  const regular = relevant.filter((e) => !e.rule);
+  const parts: string[] = [];
+
+  if (rules.length > 0) {
+    parts.push("> \u26A0 RULES (must follow when modifying these files):");
+    for (const r of rules) {
+      parts.push(`> ${r.rule}`);
+    }
+  }
+
+  if (regular.length > 0 || rules.length > 0) {
+    parts.push(
+      `> Known pitfalls relevant to your current files (${entries.length} total, showing top ${relevant.length}):`,
+    );
+    parts.push(">");
+    for (const e of relevant) {
+      const fileTag = e.files.length > 0 ? ` [${e.files.join(", ")}]` : "";
+      parts.push(`> **${e.title}**${fileTag}`);
+      if (e.description) parts.push(`> ${e.description}`);
+      if (e.tried.length > 0) parts.push(`> Dead ends: ${e.tried.join(", ")}`);
+      parts.push(">");
+    }
+  }
+
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
+/** Get relevant decisions formatted for session injection */
+export function getRelevantDecisions(root: string, relevantFiles: string[], max: number = 5): string | null {
+  const path = decisionsPath(root);
+  if (!existsSync(path)) return null;
+  const content = readFileSync(path, "utf8").trim();
+  if (!content) return null;
+
+  const entries = parseKnowledgeEntries(content);
+  if (entries.length === 0) return null;
+
+  const graph = buildCoModGraph(root);
+  const coModFiles = getCoModifiedFiles(graph, relevantFiles);
+  const relevant = getRelevantEntries(entries, relevantFiles, coModFiles, max);
+  if (relevant.length === 0) return null;
+
+  const parts: string[] = ["> Relevant decisions:"];
+  parts.push(">");
+  for (const e of relevant) {
+    const fileTag = e.files.length > 0 ? ` [${e.files.join(", ")}]` : "";
+    parts.push(`> **${e.title}**${fileTag}`);
+    if (e.description) parts.push(`> ${e.description}`);
+    if (e.rule) parts.push(`> Rule: ${e.rule}`);
+    parts.push(">");
+  }
+
+  return parts.join("\n");
+}
+
+// =============================================================================
 // Decisions & Mistakes
 // =============================================================================
 
 /** Append a decision to the decision log */
-export function appendDecision(repoRoot: string, decision: string): void {
+export function appendDecision(repoRoot: string, decision: KnowledgeEntry | string): void {
   const path = decisionsPath(repoRoot);
   mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
-  appendFileSync(path, `\n${decision}\n`);
+  if (typeof decision === "string") {
+    appendFileSync(path, `\n${decision}\n`);
+  } else {
+    appendFileSync(path, `\n${formatKnowledgeEntry(decision)}\n`);
+  }
 }
 
 /** Append a mistake to the mistake ledger */
-export function appendMistake(repoRoot: string, description: string): void {
+export function appendMistake(repoRoot: string, entry: KnowledgeEntry | string): void {
   const path = mistakesPath(repoRoot);
   mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
-  appendFileSync(path, `- ${description}\n`);
+  if (typeof entry === "string") {
+    appendFileSync(path, `- ${entry}\n`);
+  } else {
+    appendFileSync(path, `${formatKnowledgeEntry(entry)}\n`);
+  }
 }
 
 /** List all decisions, optionally filtered by tag */
@@ -379,6 +575,262 @@ export function listDecisions(repoRoot: string, tagFilter?: string): string {
   // Simple tag filter — return sections containing the tag
   const sections = content.split(/\n(?=## )/).filter((s) => s.toLowerCase().includes(tagFilter.toLowerCase()));
   return sections.join("\n");
+}
+
+// =============================================================================
+// Knowledge Entry Parsing & Formatting
+// =============================================================================
+
+/** Derive area from file paths — strips src/app/lib prefixes, uses first path segment */
+export function deriveArea(files: string[]): string {
+  if (files.length === 0) return "general";
+  const segments: string[] = [];
+  for (const f of files) {
+    const parts = f.split("/").filter(Boolean);
+    // Strip common prefixes
+    let i = 0;
+    while (i < parts.length && ["src", "app", "lib"].includes(parts[i]!)) i++;
+    if (i < parts.length - 1) {
+      segments.push(parts[i]!);
+    }
+  }
+  if (segments.length === 0) return "general";
+  // Return most common segment
+  const counts: Record<string, number> = {};
+  for (const s of segments) {
+    counts[s] = (counts[s] || 0) + 1;
+  }
+  return Object.entries(counts).sort(([, a], [, b]) => b - a)[0]![0];
+}
+
+/** Parse knowledge entries from both old `- ` lines and new `### + <!-- -->` format */
+export function parseKnowledgeEntries(content: string): KnowledgeEntry[] {
+  if (!content.trim()) return [];
+  const entries: KnowledgeEntry[] = [];
+
+  // Split by ### headings to find structured entries
+  const parts = content.split(/^(?=### )/m);
+
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!trimmed) continue;
+
+    if (trimmed.startsWith("### ")) {
+      // Structured entry: ### title\ndescription\n<!-- metadata -->
+      const lines = trimmed.split("\n");
+      const title = lines[0]!.replace(/^### /, "").trim();
+      const metaMatch = trimmed.match(/<!--\s*(.*?)\s*-->/s);
+      let description = "";
+      let sessionId = "unknown";
+      let commitSha = "";
+      let files: string[] = [];
+      let area = "general";
+      let date = "";
+      let tried: string[] = [];
+      let rule = "";
+
+      if (metaMatch) {
+        const meta = metaMatch[1]!;
+        // Parse pipe-delimited metadata fields
+        for (const field of meta.split("|").map((f) => f.trim())) {
+          const [key, ...valParts] = field.split(":");
+          const val = valParts.join(":").trim();
+          switch (key?.trim()) {
+            case "session":
+              sessionId = val;
+              break;
+            case "commit":
+              commitSha = val;
+              break;
+            case "files":
+              files = val
+                .split(",")
+                .map((f) => f.trim())
+                .filter(Boolean);
+              break;
+            case "area":
+              area = val;
+              break;
+            case "tried":
+              tried = val
+                .split(",")
+                .map((t) => t.trim())
+                .filter(Boolean);
+              break;
+            case "rule":
+              rule = val;
+              break;
+            case "date":
+              date = val;
+              break;
+          }
+        }
+
+        // Description is everything between title line and comment
+        const commentIdx = trimmed.indexOf("<!--");
+        const descLines = trimmed.slice(lines[0]!.length, commentIdx).trim();
+        description = descLines;
+      } else {
+        // No metadata comment — just title + description
+        description = lines.slice(1).join("\n").trim();
+      }
+
+      // Derive date from sessionId if not explicit
+      if (!date && sessionId !== "unknown") {
+        date = sessionId.slice(0, 10);
+      }
+
+      entries.push({ title, description, sessionId, commitSha, files, area, date, tried, rule });
+    } else {
+      // Legacy lines: parse `- ` prefixed lines
+      const lines = trimmed.split("\n");
+      for (const line of lines) {
+        const stripped = line.trim();
+        if (stripped.startsWith("- ")) {
+          const text = stripped.slice(2).trim();
+          if (text) {
+            entries.push({
+              title: text,
+              description: "",
+              sessionId: "unknown",
+              commitSha: "",
+              files: [],
+              area: "general",
+              date: "",
+              tried: [],
+              rule: "",
+            });
+          }
+        }
+      }
+    }
+  }
+  return entries;
+}
+
+/** Serialize a KnowledgeEntry to structured markdown format */
+export function formatKnowledgeEntry(entry: KnowledgeEntry): string {
+  let result = `### ${entry.title}\n`;
+  if (entry.description) {
+    result += `${entry.description}\n`;
+  }
+  const metaParts: string[] = [];
+  if (entry.sessionId) metaParts.push(`session:${entry.sessionId}`);
+  if (entry.commitSha) metaParts.push(`commit:${entry.commitSha}`);
+  if (entry.files.length > 0) metaParts.push(`files:${entry.files.join(",")}`);
+  if (entry.area && entry.area !== "general") metaParts.push(`area:${entry.area}`);
+  if (entry.date) metaParts.push(`date:${entry.date}`);
+  if (entry.tried.length > 0) metaParts.push(`tried:${entry.tried.join(",")}`);
+  if (entry.rule) metaParts.push(`rule:${entry.rule}`);
+  result += `<!-- ${metaParts.join(" | ")} -->`;
+  return result;
+}
+
+// =============================================================================
+// Co-modification Graph
+// =============================================================================
+
+/** Build co-modification graph from completed sessions */
+export function buildCoModGraph(root: string): Record<string, string[]> {
+  const cachePath = join(root, SESSION_DIR, ".comod-cache.json");
+
+  // Try loading from cache
+  const compDir = completedDir(root);
+  if (!existsSync(compDir)) return {};
+  const sessionFiles = readdirSync(compDir).filter((f) => f.endsWith(".md"));
+
+  if (existsSync(cachePath)) {
+    try {
+      const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+      if (cached.sessionCount === sessionFiles.length) {
+        return cached.graph;
+      }
+    } catch {
+      // Rebuild if cache is corrupt
+    }
+  }
+
+  // Build graph: for each session, find files modified in the same turn
+  const pairCounts: Record<string, Record<string, number>> = {};
+
+  for (const file of sessionFiles) {
+    const content = readFileSync(join(compDir, file), "utf8");
+    // Split into turns by --- delimiter
+    const turns = content.split(/^---$/m);
+    for (const turn of turns) {
+      const files = [...turn.matchAll(/^- Modified: (.+)$/gm)].map((m) => m[1]!);
+      const unique = [...new Set(files)];
+      // Record co-occurrences
+      for (let i = 0; i < unique.length; i++) {
+        for (let j = i + 1; j < unique.length; j++) {
+          const a = unique[i]!;
+          const b = unique[j]!;
+          if (!pairCounts[a]) pairCounts[a] = {};
+          if (!pairCounts[b]) pairCounts[b] = {};
+          pairCounts[a][b] = (pairCounts[a][b] || 0) + 1;
+          pairCounts[b][a] = (pairCounts[b][a] || 0) + 1;
+        }
+      }
+    }
+  }
+
+  // Convert to adjacency list sorted by frequency
+  const graph: Record<string, string[]> = {};
+  for (const [file, neighbors] of Object.entries(pairCounts)) {
+    graph[file] = Object.entries(neighbors)
+      .sort(([, a], [, b]) => b - a)
+      .map(([f]) => f);
+  }
+
+  // Cache the result
+  try {
+    mkdirSync(join(root, SESSION_DIR), { recursive: true });
+    writeFileSync(cachePath, JSON.stringify({ sessionCount: sessionFiles.length, graph }));
+  } catch {
+    // Non-critical
+  }
+
+  return graph;
+}
+
+/** Get files frequently co-modified with the given files */
+export function getCoModifiedFiles(graph: Record<string, string[]>, files: string[], limit: number = 20): string[] {
+  const counts: Record<string, number> = {};
+  const fileSet = new Set(files);
+  for (const f of files) {
+    const neighbors = graph[f];
+    if (!neighbors) continue;
+    for (const n of neighbors) {
+      if (!fileSet.has(n)) {
+        counts[n] = (counts[n] || 0) + 1;
+      }
+    }
+  }
+  return Object.entries(counts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, limit)
+    .map(([f]) => f);
+}
+
+// =============================================================================
+// Correction Detection
+// =============================================================================
+
+/** Detect files modified in consecutive turns (potential struggle indicator) */
+export function detectCorrections(sessionContent: string): Array<{ file: string; turnA: number; turnB: number }> {
+  const turns = sessionContent.split(/^---$/m);
+  const corrections: Array<{ file: string; turnA: number; turnB: number }> = [];
+
+  for (let i = 0; i < turns.length - 1; i++) {
+    const filesA = new Set([...turns[i]!.matchAll(/^- Modified: (.+)$/gm)].map((m) => m[1]!));
+    const filesB = new Set([...turns[i + 1]!.matchAll(/^- Modified: (.+)$/gm)].map((m) => m[1]!));
+    for (const f of filesA) {
+      if (filesB.has(f)) {
+        corrections.push({ file: f, turnA: i, turnB: i + 1 });
+      }
+    }
+  }
+  return corrections;
 }
 
 // =============================================================================
@@ -440,7 +892,7 @@ function extractSection(content: string, sectionName: string): string | null {
 }
 
 /** Extract all modified file paths from session content */
-function extractModifiedFiles(content: string): string[] {
+export function extractModifiedFiles(content: string): string[] {
   const matches = content.matchAll(/^- Modified: (.+)$/gm);
   return [...matches].map((m) => m[1]!);
 }

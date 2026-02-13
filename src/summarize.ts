@@ -18,11 +18,20 @@ Key technical decisions made and reasoning. Only include significant decisions
 involving architecture, technology choice, or approach selection.
 Format each as:
 **{short title}**: {context} → {decision} ({reasoning})
+Files: {comma-separated file paths where this applies}
+Rule: {if applicable, an assertion-style constraint: WHEN {context} NEVER/ALWAYS {action}}
+
+The Files: and Rule: lines are optional — omit if not applicable.
 
 ## Mistakes
 Anything that went wrong, was reverted, or required multiple attempts.
 Format each as:
 **{short description}**: What happened → Why it failed → Correct approach
+Tried: {approaches that were attempted and failed, comma-separated}
+Files: {comma-separated file paths where this applies}
+Rule: {if applicable, an assertion-style constraint: WHEN {context} NEVER/ALWAYS {action}}
+
+The Tried:, Files:, and Rule: lines are optional — omit if not applicable.
 
 ## Open Items
 Anything left unfinished or flagged for follow-up
@@ -59,10 +68,17 @@ export async function summarize(sessionPath: string): Promise<string | null> {
 // Section Extraction
 // =============================================================================
 
+export interface ExtractedEntry {
+  text: string;
+  files: string[];
+  tried: string[];
+  rule: string;
+}
+
 export interface ExtractedSections {
   tags: string[];
-  decisions: string[];
-  mistakes: string[];
+  decisions: ExtractedEntry[];
+  mistakes: ExtractedEntry[];
   intent: string;
   changes: string;
   openItems: string;
@@ -90,21 +106,61 @@ function extractTags(summary: string): string[] {
     .filter((t) => t.length > 0 && !t.startsWith("#"));
 }
 
+/** Parse a single entry block into ExtractedEntry with Files/Tried/Rule metadata */
+function parseEntryBlock(block: string): ExtractedEntry {
+  let text = block;
+  let files: string[] = [];
+  let tried: string[] = [];
+  let rule = "";
+
+  const filesMatch = text.match(/^Files:\s*(.+)$/m);
+  if (filesMatch) {
+    files = filesMatch[1]!
+      .split(",")
+      .map((f) => f.trim())
+      .filter(Boolean);
+    text = text.replace(filesMatch[0], "");
+  }
+
+  const triedMatch = text.match(/^Tried:\s*(.+)$/m);
+  if (triedMatch) {
+    tried = triedMatch[1]!
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
+    text = text.replace(triedMatch[0], "");
+  }
+
+  const ruleMatch = text.match(/^Rule:\s*(.+)$/m);
+  if (ruleMatch) {
+    rule = ruleMatch[1]!.trim();
+    text = text.replace(ruleMatch[0], "");
+  }
+
+  // Clean up extra blank lines from removed metadata lines
+  text = text
+    .split("\n")
+    .filter((l) => l.trim() !== "")
+    .join("\n")
+    .trim();
+
+  return { text, files, tried, rule };
+}
+
 /** Extract individual decision entries */
-function extractDecisionEntries(summary: string): string[] {
+export function extractDecisionEntries(summary: string): ExtractedEntry[] {
   const section = extractNamedSection(summary, "Decisions");
   if (!section || section.toLowerCase().includes("none")) return [];
-  // Split by newline before bold markers (e.g. **Title:** description)
-  const entries = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
-  return entries.map((e) => e.trim());
+  const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
+  return blocks.map((b) => parseEntryBlock(b.trim()));
 }
 
 /** Extract individual mistake entries */
-function extractMistakeEntries(summary: string): string[] {
+export function extractMistakeEntries(summary: string): ExtractedEntry[] {
   const section = extractNamedSection(summary, "Mistakes");
   if (!section || section.toLowerCase().includes("none this session")) return [];
-  const entries = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
-  return entries.map((e) => e.trim());
+  const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
+  return blocks.map((b) => parseEntryBlock(b.trim()));
 }
 
 /** Extract a named section from markdown */
