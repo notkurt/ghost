@@ -46,7 +46,13 @@ export async function indexSession(root: string): Promise<{ ok: boolean; reason?
   try {
     const exists = await collectionExists(root);
     if (exists) {
-      await $`qmd update`.quiet();
+      // qmd update is global (all collections) — may fail due to unrelated
+      // collections with missing source dirs. Non-fatal: our collection still updates.
+      try {
+        await $`qmd update`.quiet();
+      } catch {
+        // ignore global update failures
+      }
     } else {
       await $`qmd collection add ${dir} --name ${name}`.quiet();
       await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();

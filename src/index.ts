@@ -559,8 +559,13 @@ if (import.meta.main) {
       case "reindex": {
         const root = await repoRoot();
         const { indexSession } = await import("./qmd.js");
-        await indexSession(root);
-        console.log("Reindexed.");
+        const result = await indexSession(root);
+        if (result.ok) {
+          console.log("Reindexed.");
+        } else {
+          console.error(`Reindex failed: ${result.reason}`);
+          process.exit(1);
+        }
         break;
       }
 
