@@ -207,13 +207,22 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.yellow}(skipped)${c.reset}`);
   }
 
-  // 12. Optional genesis — build initial knowledge base from codebase
+  // 12. Optional genesis — build initial knowledge base from codebase + absorb CLAUDE.md
   if (opts?.genesis && report.claude.available) {
     console.log("");
-    const { genesis } = await import("./knowledge.js");
+    const { absorb, genesis, injectKnowledge } = await import("./knowledge.js");
+    // Absorb existing CLAUDE.md into knowledge files first
+    try {
+      const claudeMdPath = join(root, "CLAUDE.md");
+      if (existsSync(claudeMdPath) && readFileSync(claudeMdPath, "utf8").trim()) {
+        await absorb(root);
+      }
+    } catch {
+      // absorb is best-effort during enable
+    }
+    // Then build knowledge from codebase
     const built = await genesis(root);
     if (built) {
-      const { injectKnowledge } = await import("./knowledge.js");
       await injectKnowledge(root);
     }
   } else if (opts?.genesis && !report.claude.available) {
