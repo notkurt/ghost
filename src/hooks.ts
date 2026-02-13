@@ -14,7 +14,6 @@ import {
   finalizeSession,
   findRecentSession,
   generateContinuityBlock,
-  getActiveSessionId,
   getCoModifiedFiles,
   getRelevantDecisions,
   getRelevantMistakes,
@@ -30,7 +29,7 @@ import {
  */
 export async function handleSessionStart(input: SessionStartInput): Promise<string | undefined> {
   const root = input.cwd || (await repoRoot());
-  const _id = await createSession(root);
+  const _id = await createSession(root, input.session_id);
 
   const parts: string[] = [];
 
@@ -99,6 +98,20 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
     // Non-critical — skip silently
   }
 
+  // 6. Always inject Ghost briefing so Claude understands how to work with Ghost
+  parts.push(
+    `> **Ghost is recording this session.** Prompts, file changes, and decisions are captured automatically.
+> At session end, Ghost extracts decisions, mistakes, and open items from your summary and stores them
+> in .ai-sessions/ — then injects only the relevant ones into future sessions based on file overlap.
+>
+> **Do NOT write project knowledge or documentation into CLAUDE.md.** Ghost manages context injection
+> per-session. Writing to CLAUDE.md bypasses Ghost's relevance scoring and creates stale, bloated context.
+> If asked to document something, put it where it belongs: code comments, README, or dedicated docs.
+>
+> **Search past sessions:** Use the \`ghost-sessions\` MCP tool to search decisions, mistakes, and past
+> reasoning. CLI: \`ghost search <query>\`, \`ghost log\`, \`ghost decisions\`.`,
+  );
+
   if (parts.length > 0) {
     return parts.join("\n\n");
   }
@@ -112,7 +125,7 @@ export async function handlePrompt(input: UserPromptInput): Promise<void> {
   const root = input.cwd || (await repoRoot());
   const prompt = input.prompt || "";
   if (prompt) {
-    appendPrompt(root, prompt);
+    appendPrompt(root, input.session_id, prompt);
   }
 }
 
@@ -123,7 +136,7 @@ export async function handlePostWrite(input: PostToolUseInput): Promise<void> {
   const root = input.cwd || (await repoRoot());
   const filePath = input.tool_input?.file_path as string | undefined;
   if (filePath) {
-    appendFileModification(root, filePath);
+    appendFileModification(root, input.session_id, filePath);
   }
 }
 
@@ -133,7 +146,7 @@ export async function handlePostWrite(input: PostToolUseInput): Promise<void> {
 export async function handlePostTask(input: PostToolUseInput): Promise<void> {
   const root = input.cwd || (await repoRoot());
   const description = (input.tool_input?.description as string) || "subtask completed";
-  appendTaskNote(root, description);
+  appendTaskNote(root, input.session_id, description);
 }
 
 /**
@@ -141,7 +154,7 @@ export async function handlePostTask(input: PostToolUseInput): Promise<void> {
  */
 export async function handleStop(input: StopInput): Promise<void> {
   const root = input.cwd || (await repoRoot());
-  await appendTurnDelimiter(root);
+  await appendTurnDelimiter(root, input.session_id);
 }
 
 /**
@@ -150,11 +163,11 @@ export async function handleStop(input: StopInput): Promise<void> {
  */
 export async function handleSessionEnd(input: SessionEndInput): Promise<void> {
   const root = input.cwd || (await repoRoot());
-  const sessionId = getActiveSessionId(root);
-  if (!sessionId) return;
 
-  const completedPath = finalizeSession(root);
-  if (!completedPath) return;
+  const result = finalizeSession(root, input.session_id);
+  if (!result) return;
+
+  const { path: completedPath, ghostId: sessionId } = result;
 
   // Fork detached background process for heavy work
   try {

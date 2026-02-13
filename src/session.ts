@@ -13,6 +13,7 @@ import {
   mistakesPath,
   SESSION_DIR,
   sessionFilePath,
+  sessionMapPath,
   tagsPath,
 } from "./paths.js";
 import { redactWithBuiltinPatterns } from "./redact.js";
@@ -45,11 +46,60 @@ export function generateSessionId(): string {
 }
 
 // =============================================================================
+// Session Map (Claude session_id → Ghost session_id)
+// =============================================================================
+
+/** Read the session map from disk */
+export function readSessionMap(repoRoot: string): Record<string, string> {
+  const mapPath = sessionMapPath(repoRoot);
+  if (!existsSync(mapPath)) return {};
+  try {
+    return JSON.parse(readFileSync(mapPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+/** Write the session map to disk */
+export function writeSessionMap(repoRoot: string, map: Record<string, string>): void {
+  writeFileSync(sessionMapPath(repoRoot), `${JSON.stringify(map)}\n`);
+}
+
+/** Register a Claude session_id → Ghost session_id mapping */
+export function registerSession(repoRoot: string, claudeSessionId: string, ghostSessionId: string): void {
+  const map = readSessionMap(repoRoot);
+  map[claudeSessionId] = ghostSessionId;
+  writeSessionMap(repoRoot, map);
+}
+
+/** Look up the Ghost session_id for a Claude session_id */
+export function resolveGhostId(repoRoot: string, claudeSessionId: string): string | null {
+  const map = readSessionMap(repoRoot);
+  return map[claudeSessionId] || null;
+}
+
+/** Get the session file path for a hook call, using Claude's session_id */
+export function getSessionPathForHook(repoRoot: string, claudeSessionId: string): string | null {
+  const ghostId = resolveGhostId(repoRoot, claudeSessionId);
+  if (!ghostId) return null;
+  const path = sessionFilePath(repoRoot, ghostId);
+  if (!existsSync(path)) return null;
+  return path;
+}
+
+/** Remove a Claude session_id from the session map */
+export function unregisterSession(repoRoot: string, claudeSessionId: string): void {
+  const map = readSessionMap(repoRoot);
+  delete map[claudeSessionId];
+  writeSessionMap(repoRoot, map);
+}
+
+// =============================================================================
 // Session Lifecycle
 // =============================================================================
 
 /** Create a new session file with frontmatter, return session ID */
-export async function createSession(repoRoot: string): Promise<string> {
+export async function createSession(repoRoot: string, claudeSessionId?: string): Promise<string> {
   const id = generateSessionId();
   const dir = activeDir(repoRoot);
   mkdirSync(dir, { recursive: true });
@@ -74,6 +124,11 @@ export async function createSession(repoRoot: string): Promise<string> {
   writeFileSync(sessionFilePath(repoRoot, id), content);
   writeFileSync(currentIdPath(repoRoot), id);
 
+  // Register Claude session_id → Ghost session_id mapping
+  if (claudeSessionId) {
+    registerSession(repoRoot, claudeSessionId, id);
+  }
+
   return id;
 }
 
@@ -96,8 +151,8 @@ export function getActiveSessionPath(repoRoot: string): string | null {
 }
 
 /** Count ## Prompt headings in the active session */
-export function getPromptCount(repoRoot: string): number {
-  const path = getActiveSessionPath(repoRoot);
+export function getPromptCount(repoRoot: string, claudeSessionId?: string): number {
+  const path = claudeSessionId ? getSessionPathForHook(repoRoot, claudeSessionId) : getActiveSessionPath(repoRoot);
   if (!path || !existsSync(path)) return 0;
   const content = readFileSync(path, "utf8");
   const matches = content.match(/^## Prompt \d+/gm);
@@ -109,8 +164,18 @@ export function getPromptCount(repoRoot: string): number {
 // =============================================================================
 
 /** Append a user prompt to the active session (deduplicates consecutive identical prompts) */
-export function appendPrompt(repoRoot: string, promptText: string): void {
-  const path = getActiveSessionPath(repoRoot);
+export function appendPrompt(repoRoot: string, claudeSessionIdOrPrompt: string, promptText?: string): void {
+  // Support both old (repoRoot, prompt) and new (repoRoot, claudeSessionId, prompt) signatures
+  let claudeSessionId: string | undefined;
+  let prompt: string;
+  if (promptText !== undefined) {
+    claudeSessionId = claudeSessionIdOrPrompt;
+    prompt = promptText;
+  } else {
+    prompt = claudeSessionIdOrPrompt;
+  }
+
+  const path = claudeSessionId ? getSessionPathForHook(repoRoot, claudeSessionId) : getActiveSessionPath(repoRoot);
   if (!path) return;
 
   // Dedup: skip if last recorded prompt is identical
@@ -119,32 +184,57 @@ export function appendPrompt(repoRoot: string, promptText: string): void {
     const lastPrompt = content.match(/^> (.+)$/gm);
     if (lastPrompt && lastPrompt.length > 0) {
       const lastText = lastPrompt[lastPrompt.length - 1]!.slice(2); // strip "> "
-      if (lastText === promptText) return;
+      if (lastText === prompt) return;
     }
   }
 
-  const n = getPromptCount(repoRoot) + 1;
-  const block = `\n## Prompt ${n}\n> ${promptText}\n`;
+  const n = getPromptCount(repoRoot, claudeSessionId) + 1;
+  const block = `\n## Prompt ${n}\n> ${prompt}\n`;
   appendFileSync(path, block);
 }
 
 /** Append a file modification note */
-export function appendFileModification(repoRoot: string, filePath: string): void {
-  const path = getActiveSessionPath(repoRoot);
+export function appendFileModification(repoRoot: string, claudeSessionIdOrPath: string, filePath?: string): void {
+  // Support both old (repoRoot, filePath) and new (repoRoot, claudeSessionId, filePath) signatures
+  let claudeSessionId: string | undefined;
+  let modifiedPath: string;
+  if (filePath !== undefined) {
+    claudeSessionId = claudeSessionIdOrPath;
+    modifiedPath = filePath;
+  } else {
+    modifiedPath = claudeSessionIdOrPath;
+  }
+
+  const path = claudeSessionId ? getSessionPathForHook(repoRoot, claudeSessionId) : getActiveSessionPath(repoRoot);
   if (!path) return;
-  appendFileSync(path, `\n- Modified: ${filePath}\n`);
+  // Normalize absolute paths to repo-relative
+  let rel = modifiedPath;
+  if (rel.startsWith(repoRoot)) {
+    rel = rel.slice(repoRoot.length).replace(/^\//, "");
+  }
+  appendFileSync(path, `\n- Modified: ${rel}\n`);
 }
 
 /** Append a task completion note */
-export function appendTaskNote(repoRoot: string, note: string): void {
-  const path = getActiveSessionPath(repoRoot);
+export function appendTaskNote(repoRoot: string, claudeSessionIdOrNote: string, note?: string): void {
+  // Support both old (repoRoot, note) and new (repoRoot, claudeSessionId, note) signatures
+  let claudeSessionId: string | undefined;
+  let taskNote: string;
+  if (note !== undefined) {
+    claudeSessionId = claudeSessionIdOrNote;
+    taskNote = note;
+  } else {
+    taskNote = claudeSessionIdOrNote;
+  }
+
+  const path = claudeSessionId ? getSessionPathForHook(repoRoot, claudeSessionId) : getActiveSessionPath(repoRoot);
   if (!path) return;
-  appendFileSync(path, `\n- Task: ${note}\n`);
+  appendFileSync(path, `\n- Task: ${taskNote}\n`);
 }
 
 /** Append a turn delimiter with timestamp and optional diff stat */
-export async function appendTurnDelimiter(repoRoot: string): Promise<void> {
-  const path = getActiveSessionPath(repoRoot);
+export async function appendTurnDelimiter(repoRoot: string, claudeSessionId?: string): Promise<void> {
+  const path = claudeSessionId ? getSessionPathForHook(repoRoot, claudeSessionId) : getActiveSessionPath(repoRoot);
   if (!path) return;
   const timestamp = new Date().toISOString();
   let block = `\n---\n_turn completed: ${timestamp}_\n`;
@@ -159,9 +249,15 @@ export async function appendTurnDelimiter(repoRoot: string): Promise<void> {
 // Session Finalization
 // =============================================================================
 
-/** Finalize the active session — close sections, move to completed, return path */
-export function finalizeSession(repoRoot: string): string | null {
-  const id = getActiveSessionId(repoRoot);
+/** Finalize a session — close sections, move to completed, return path */
+export function finalizeSession(repoRoot: string, claudeSessionId?: string): { path: string; ghostId: string } | null {
+  // Resolve the ghost ID: use session map if claudeSessionId provided, else current-id
+  let id: string | null;
+  if (claudeSessionId) {
+    id = resolveGhostId(repoRoot, claudeSessionId);
+  } else {
+    id = getActiveSessionId(repoRoot);
+  }
   if (!id) return null;
 
   const activePath = sessionFilePath(repoRoot, id);
@@ -181,13 +277,21 @@ export function finalizeSession(repoRoot: string): string | null {
   const compPath = completedSessionPath(repoRoot, id);
   renameSync(activePath, compPath);
 
-  // Clean up current-id
-  const idPath = currentIdPath(repoRoot);
-  if (existsSync(idPath)) {
-    writeFileSync(idPath, "");
+  // Unregister from session map
+  if (claudeSessionId) {
+    unregisterSession(repoRoot, claudeSessionId);
   }
 
-  return compPath;
+  // Update current-id: clear it if it pointed to this session
+  const idPath = currentIdPath(repoRoot);
+  if (existsSync(idPath)) {
+    const currentId = readFileSync(idPath, "utf8").trim();
+    if (currentId === id) {
+      writeFileSync(idPath, "");
+    }
+  }
+
+  return { path: compPath, ghostId: id };
 }
 
 // =============================================================================
@@ -585,11 +689,25 @@ export function listDecisions(repoRoot: string, tagFilter?: string): string {
 export function deriveArea(files: string[]): string {
   if (files.length === 0) return "general";
   const segments: string[] = [];
+  const codeRoots = new Set(["src", "app", "lib"]);
   for (const f of files) {
     const parts = f.split("/").filter(Boolean);
-    // Strip common prefixes
     let i = 0;
-    while (i < parts.length && ["src", "app", "lib"].includes(parts[i]!)) i++;
+    // For absolute paths, skip ahead to the first src/app/lib marker
+    if (f.startsWith("/")) {
+      const rootIdx = parts.findIndex((p) => codeRoots.has(p));
+      if (rootIdx >= 0) {
+        i = rootIdx;
+      } else {
+        // No code root found — use second-to-last segment if available
+        if (parts.length >= 2) {
+          segments.push(parts[parts.length - 2]!);
+        }
+        continue;
+      }
+    }
+    // Strip common prefixes
+    while (i < parts.length && codeRoots.has(parts[i]!)) i++;
     if (i < parts.length - 1) {
       segments.push(parts[i]!);
     }

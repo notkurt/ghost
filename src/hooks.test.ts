@@ -11,7 +11,7 @@ import {
   handleStop,
 } from "./hooks.js";
 import { ACTIVE_DIR, COMPLETED_DIR, SESSION_DIR } from "./paths.js";
-import { getActiveSessionId, parseFrontmatter } from "./session.js";
+import { getActiveSessionId, getSessionPathForHook, parseFrontmatter, readSessionMap } from "./session.js";
 
 let tmpDir: string;
 
@@ -40,6 +40,14 @@ describe("handleSessionStart", () => {
     const content = readFileSync(filePath, "utf8");
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.session).toBe(id);
+  });
+
+  test("injects Ghost briefing with CLAUDE.md guidance", async () => {
+    const context = await handleSessionStart({ session_id: "test-123", cwd: tmpDir });
+    expect(context).toBeDefined();
+    expect(context).toContain("Ghost is recording this session");
+    expect(context).toContain("Do NOT write project knowledge or documentation into CLAUDE.md");
+    expect(context).toContain("ghost-sessions");
   });
 });
 
@@ -76,6 +84,21 @@ describe("handlePostWrite", () => {
     const id = getActiveSessionId(tmpDir)!;
     const content = readFileSync(join(tmpDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`), "utf8");
     expect(content).toContain("- Modified: src/cart/fees.ts");
+  });
+
+  test("normalizes absolute paths to repo-relative", async () => {
+    await handleSessionStart({ session_id: "test-123", cwd: tmpDir });
+    await handlePostWrite({
+      session_id: "test-123",
+      cwd: tmpDir,
+      tool_name: "Write",
+      tool_input: { file_path: `${tmpDir}/src/cart/fees.ts` },
+    });
+
+    const id = getActiveSessionId(tmpDir)!;
+    const content = readFileSync(join(tmpDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`), "utf8");
+    expect(content).toContain("- Modified: src/cart/fees.ts");
+    expect(content).not.toContain(tmpDir);
   });
 });
 
@@ -168,5 +191,73 @@ describe("full session lifecycle", () => {
 
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.ended).toBeDefined();
+  });
+});
+
+describe("concurrent sessions via hooks", () => {
+  test("two sessions write to separate files and finalize independently", async () => {
+    // Start Session A
+    await handleSessionStart({ session_id: "session-A", cwd: tmpDir });
+    const mapAfterA = readSessionMap(tmpDir);
+    const ghostIdA = mapAfterA["session-A"]!;
+    expect(ghostIdA).toBeDefined();
+
+    // Start Session B
+    await handleSessionStart({ session_id: "session-B", cwd: tmpDir });
+    const mapAfterB = readSessionMap(tmpDir);
+    const ghostIdB = mapAfterB["session-B"]!;
+    expect(ghostIdB).toBeDefined();
+    expect(ghostIdA).not.toBe(ghostIdB);
+
+    // Prompt from A
+    await handlePrompt({ session_id: "session-A", cwd: tmpDir, prompt: "Fix auth" });
+    await handlePostWrite({
+      session_id: "session-A",
+      cwd: tmpDir,
+      tool_name: "Edit",
+      tool_input: { file_path: "src/auth.ts" },
+    });
+
+    // Prompt from B
+    await handlePrompt({ session_id: "session-B", cwd: tmpDir, prompt: "Fix cart" });
+    await handlePostWrite({
+      session_id: "session-B",
+      cwd: tmpDir,
+      tool_name: "Edit",
+      tool_input: { file_path: "src/cart.ts" },
+    });
+
+    // Verify isolation: A's file has only A's content
+    const pathA = getSessionPathForHook(tmpDir, "session-A")!;
+    const contentA = readFileSync(pathA, "utf8");
+    expect(contentA).toContain("Fix auth");
+    expect(contentA).toContain("src/auth.ts");
+    expect(contentA).not.toContain("Fix cart");
+    expect(contentA).not.toContain("src/cart.ts");
+
+    // Verify isolation: B's file has only B's content
+    const pathB = getSessionPathForHook(tmpDir, "session-B")!;
+    const contentB = readFileSync(pathB, "utf8");
+    expect(contentB).toContain("Fix cart");
+    expect(contentB).toContain("src/cart.ts");
+    expect(contentB).not.toContain("Fix auth");
+    expect(contentB).not.toContain("src/auth.ts");
+
+    // End session A — B should continue working
+    await handleSessionEnd({ session_id: "session-A", cwd: tmpDir });
+    expect(existsSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR, `${ghostIdA}.md`))).toBe(true);
+
+    // B is still active
+    await handlePrompt({ session_id: "session-B", cwd: tmpDir, prompt: "More cart work" });
+    const contentB2 = readFileSync(pathB, "utf8");
+    expect(contentB2).toContain("More cart work");
+
+    // End session B
+    await handleSessionEnd({ session_id: "session-B", cwd: tmpDir });
+    expect(existsSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR, `${ghostIdB}.md`))).toBe(true);
+
+    // Session map should be empty
+    const finalMap = readSessionMap(tmpDir);
+    expect(Object.keys(finalMap).length).toBe(0);
   });
 });

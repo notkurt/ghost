@@ -25,10 +25,13 @@ import {
   getCondensedMistakes,
   getPromptCount,
   getRelevantEntries,
+  getSessionPathForHook,
   listDecisions,
   listTags,
   parseFrontmatter,
   parseKnowledgeEntries,
+  readSessionMap,
+  resolveGhostId,
 } from "./session.js";
 
 let tmpDir: string;
@@ -80,6 +83,25 @@ describe("createSession", () => {
     const id = await createSession(tmpDir);
     const currentId = readFileSync(join(tmpDir, SESSION_DIR, ACTIVE_DIR, "current-id"), "utf8").trim();
     expect(currentId).toBe(id);
+  });
+
+  test("registers Claude session_id in session map", async () => {
+    const id = await createSession(tmpDir, "claude-abc123");
+    const map = readSessionMap(tmpDir);
+    expect(map["claude-abc123"]).toBe(id);
+  });
+
+  test("resolves ghost ID from Claude session_id", async () => {
+    const id = await createSession(tmpDir, "claude-abc123");
+    expect(resolveGhostId(tmpDir, "claude-abc123")).toBe(id);
+    expect(resolveGhostId(tmpDir, "nonexistent")).toBeNull();
+  });
+
+  test("getSessionPathForHook returns correct path", async () => {
+    const id = await createSession(tmpDir, "claude-abc123");
+    const path = getSessionPathForHook(tmpDir, "claude-abc123");
+    expect(path).toBe(join(tmpDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`));
+    expect(getSessionPathForHook(tmpDir, "nonexistent")).toBeNull();
   });
 });
 
@@ -141,8 +163,9 @@ describe("appendTaskNote", () => {
 describe("finalizeSession", () => {
   test("moves file from active to completed", async () => {
     const id = await createSession(tmpDir);
-    const compPath = finalizeSession(tmpDir);
-    expect(compPath).not.toBeNull();
+    const result = finalizeSession(tmpDir);
+    expect(result).not.toBeNull();
+    expect(result!.ghostId).toBe(id);
 
     // Active file should be gone
     const activePath = join(tmpDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`);
@@ -166,6 +189,20 @@ describe("finalizeSession", () => {
 
   test("returns null when no active session", () => {
     expect(finalizeSession(tmpDir)).toBeNull();
+  });
+
+  test("finalizes via Claude session_id and unregisters from map", async () => {
+    const id = await createSession(tmpDir, "claude-abc123");
+    const result = finalizeSession(tmpDir, "claude-abc123");
+    expect(result).not.toBeNull();
+    expect(result!.ghostId).toBe(id);
+
+    // Session map should no longer have this entry
+    const map = readSessionMap(tmpDir);
+    expect(map["claude-abc123"]).toBeUndefined();
+
+    // Completed file should exist
+    expect(existsSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR, `${id}.md`))).toBe(true);
   });
 });
 
@@ -280,7 +317,7 @@ describe("decisions", () => {
 });
 
 describe("multiple sessions", () => {
-  test("sessions are isolated", async () => {
+  test("sequential sessions are isolated", async () => {
     const id1 = await createSession(tmpDir);
     appendPrompt(tmpDir, "First session prompt");
     finalizeSession(tmpDir);
@@ -296,11 +333,112 @@ describe("multiple sessions", () => {
     expect(content2).toContain("Second session prompt");
     expect(content2).not.toContain("First session prompt");
   });
+
+  test("concurrent sessions write to separate files", async () => {
+    // Start two sessions with different Claude session IDs
+    const idA = await createSession(tmpDir, "claude-session-A");
+    const idB = await createSession(tmpDir, "claude-session-B");
+    expect(idA).not.toBe(idB);
+
+    // Both should be registered in the session map
+    const map = readSessionMap(tmpDir);
+    expect(map["claude-session-A"]).toBe(idA);
+    expect(map["claude-session-B"]).toBe(idB);
+
+    // Prompts from A go to A's file
+    appendPrompt(tmpDir, "claude-session-A", "Prompt for session A");
+    appendFileModification(tmpDir, "claude-session-A", "src/a.ts");
+    appendTaskNote(tmpDir, "claude-session-A", "Task in A");
+
+    // Prompts from B go to B's file
+    appendPrompt(tmpDir, "claude-session-B", "Prompt for session B");
+    appendFileModification(tmpDir, "claude-session-B", "src/b.ts");
+
+    // Verify A's file
+    const pathA = getSessionPathForHook(tmpDir, "claude-session-A")!;
+    const contentA = readFileSync(pathA, "utf8");
+    expect(contentA).toContain("Prompt for session A");
+    expect(contentA).toContain("- Modified: src/a.ts");
+    expect(contentA).toContain("- Task: Task in A");
+    expect(contentA).not.toContain("Prompt for session B");
+    expect(contentA).not.toContain("src/b.ts");
+
+    // Verify B's file
+    const pathB = getSessionPathForHook(tmpDir, "claude-session-B")!;
+    const contentB = readFileSync(pathB, "utf8");
+    expect(contentB).toContain("Prompt for session B");
+    expect(contentB).toContain("- Modified: src/b.ts");
+    expect(contentB).not.toContain("Prompt for session A");
+    expect(contentB).not.toContain("src/a.ts");
+  });
+
+  test("ending one concurrent session doesn't affect the other", async () => {
+    const idA = await createSession(tmpDir, "claude-session-A");
+    const idB = await createSession(tmpDir, "claude-session-B");
+
+    appendPrompt(tmpDir, "claude-session-A", "Prompt A");
+    appendPrompt(tmpDir, "claude-session-B", "Prompt B");
+
+    // End session A
+    const resultA = finalizeSession(tmpDir, "claude-session-A");
+    expect(resultA).not.toBeNull();
+    expect(resultA!.ghostId).toBe(idA);
+
+    // A's file moved to completed
+    expect(existsSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR, `${idA}.md`))).toBe(true);
+    expect(existsSync(join(tmpDir, SESSION_DIR, ACTIVE_DIR, `${idA}.md`))).toBe(false);
+
+    // B should still be active and writable
+    appendPrompt(tmpDir, "claude-session-B", "Another prompt for B");
+    const pathB = getSessionPathForHook(tmpDir, "claude-session-B")!;
+    const contentB = readFileSync(pathB, "utf8");
+    expect(contentB).toContain("Prompt B");
+    expect(contentB).toContain("Another prompt for B");
+
+    // Session map should only have B
+    const mapAfter = readSessionMap(tmpDir);
+    expect(mapAfter["claude-session-A"]).toBeUndefined();
+    expect(mapAfter["claude-session-B"]).toBe(idB);
+
+    // End session B
+    const resultB = finalizeSession(tmpDir, "claude-session-B");
+    expect(resultB).not.toBeNull();
+    expect(existsSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR, `${idB}.md`))).toBe(true);
+  });
+
+  test("current-id tracks last-started session for CLI compat", async () => {
+    await createSession(tmpDir, "claude-session-A");
+    const idB = await createSession(tmpDir, "claude-session-B");
+
+    // current-id should be the last-started session (B)
+    expect(getActiveSessionId(tmpDir)).toBe(idB);
+  });
 });
 
 // =============================================================================
 // Knowledge Entry Parsing & Formatting
 // =============================================================================
+
+describe("appendFileModification — path normalization", () => {
+  test("normalizes absolute paths to repo-relative", async () => {
+    await createSession(tmpDir);
+    appendFileModification(tmpDir, `${tmpDir}/src/cart/fees.ts`);
+
+    const path = getActiveSessionPath(tmpDir)!;
+    const content = readFileSync(path, "utf8");
+    expect(content).toContain("- Modified: src/cart/fees.ts");
+    expect(content).not.toContain(tmpDir);
+  });
+
+  test("leaves relative paths unchanged", async () => {
+    await createSession(tmpDir);
+    appendFileModification(tmpDir, "src/cart/fees.ts");
+
+    const path = getActiveSessionPath(tmpDir)!;
+    const content = readFileSync(path, "utf8");
+    expect(content).toContain("- Modified: src/cart/fees.ts");
+  });
+});
 
 describe("deriveArea", () => {
   test("extracts area from src/ paths", () => {
@@ -326,6 +464,14 @@ describe("deriveArea", () => {
 
   test("handles deeply nested paths", () => {
     expect(deriveArea(["src/app/lib/features/auth/login.ts"])).toBe("features");
+  });
+
+  test("skips absolute path prefixes like Users/home", () => {
+    expect(deriveArea(["/Users/kat/Dev/Code/project/src/cart/fees.ts"])).toBe("cart");
+  });
+
+  test("handles /home/ absolute paths", () => {
+    expect(deriveArea(["/home/user/projects/myapp/src/hooks/useAuth.ts"])).toBe("hooks");
   });
 });
 

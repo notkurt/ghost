@@ -8,6 +8,7 @@ export const SESSION_DIR = ".ai-sessions";
 export const ACTIVE_DIR = "active";
 export const COMPLETED_DIR = "completed";
 export const CURRENT_ID_FILE = "current-id";
+export const SESSION_MAP_FILE = "session-map.json";
 export const TAGS_FILE = "tags.json";
 export const KNOWLEDGE_FILE = "knowledge.md";
 export const MISTAKES_FILE = "mistakes.md";
@@ -65,6 +66,11 @@ export function mistakesPath(repoRoot: string): string {
 /** Path to the decision log */
 export function decisionsPath(repoRoot: string): string {
   return join(repoRoot, SESSION_DIR, DECISIONS_FILE);
+}
+
+/** Path to the session map (Claude session_id → Ghost session_id) */
+export function sessionMapPath(repoRoot: string): string {
+  return join(repoRoot, SESSION_DIR, ACTIVE_DIR, SESSION_MAP_FILE);
 }
 
 /** Path to the last-sync timestamp file (for rate-limiting remote fetches) */
