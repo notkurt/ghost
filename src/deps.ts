@@ -28,11 +28,12 @@ const _cache: Record<string, DepStatus> = {};
 async function checkBinary(name: string): Promise<DepStatus> {
   if (_cache[name]) return _cache[name]!;
   try {
-    const pathResult = await $`command -v ${name}`.quiet();
-    const binPath = pathResult.text().trim();
+    // Use Bun.which() — more reliable than shell `command -v` in hook subprocesses
+    const binPath = Bun.which(name);
+    if (!binPath) throw new Error("not found");
     let version: string | undefined;
     try {
-      const verResult = await $`${name} --version`.quiet();
+      const verResult = await $`${binPath} --version`.quiet();
       version = verResult.text().trim().split("\n")[0];
     } catch {
       // Some binaries don't have --version

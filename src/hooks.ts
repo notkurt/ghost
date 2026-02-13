@@ -176,7 +176,7 @@ export async function handleSessionEnd(input: SessionEndInput): Promise<void> {
   try {
     const scriptPath = new URL("./background.ts", import.meta.url).pathname;
     if (existsSync(scriptPath)) {
-      Bun.spawn(["bun", scriptPath, root, completedPath, sessionId], {
+      Bun.spawn([process.execPath, scriptPath, root, completedPath, sessionId], {
         stdio: ["ignore", "ignore", "ignore"],
       });
     }

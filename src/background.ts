@@ -196,8 +196,8 @@ try {
 
   // 5. Index into QMD
   try {
-    const indexed = await indexSession(repoRoot);
-    log(indexed ? "QMD indexing complete" : "QMD indexing skipped (qmd not available)");
+    const qmdResult = await indexSession(repoRoot);
+    log(qmdResult.ok ? "QMD indexing complete" : `QMD indexing skipped (${qmdResult.reason})`);
   } catch (err) {
     log(`QMD indexing failed: ${err instanceof Error ? err.message : String(err)}`);
   }

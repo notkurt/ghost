@@ -37,9 +37,10 @@ export async function collectionExists(root?: string): Promise<boolean> {
   }
 }
 
-/** Index sessions into the project's QMD collection. Creates collection if needed, updates if exists. */
-export async function indexSession(root: string): Promise<boolean> {
-  if (!(await isQmdAvailable())) return false;
+/** Index sessions into the project's QMD collection. Creates collection if needed, updates if exists.
+ *  Returns { ok, reason } for diagnostic logging. */
+export async function indexSession(root: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!(await isQmdAvailable())) return { ok: false, reason: "qmd not found on PATH" };
   const name = await collectionName(root);
   const dir = completedDir(root);
   try {
@@ -51,9 +52,9 @@ export async function indexSession(root: string): Promise<boolean> {
       await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
     }
     await $`qmd embed`.quiet();
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, reason: `command failed: ${err instanceof Error ? err.message : String(err)}` };
   }
 }
 
