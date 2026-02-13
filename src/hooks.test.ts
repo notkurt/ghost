@@ -42,14 +42,14 @@ describe("handleSessionStart", () => {
     expect(frontmatter.session).toBe(id);
   });
 
-  test("injects Ghost briefing with CLAUDE.md guidance and command cheat sheet", async () => {
+  test("injects Ghost briefing with search-first guidance", async () => {
     const context = await handleSessionStart({ session_id: "test-123", cwd: tmpDir });
     expect(context).toBeDefined();
     expect(context).toContain("Ghost is recording this session");
     expect(context).toContain("Do NOT write project knowledge or documentation into CLAUDE.md");
-    expect(context).toContain("Ghost commands:");
+    expect(context).toContain("ALWAYS search Ghost before reading code");
+    expect(context).toContain("deep_search");
     expect(context).toContain("ghost search <query>");
-    expect(context).toContain("ghost show <id>");
     expect(context).toContain("ghost-sessions");
   });
 });

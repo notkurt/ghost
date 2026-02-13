@@ -445,8 +445,11 @@ const GHOST_HEADER_SENTINEL = "<!-- ghost:header -->";
 const GHOST_HEADER = `${GHOST_HEADER_SENTINEL}
 ## Ghost — AI Session Memory
 
-**Before exploring the codebase**, check Ghost for existing context from past sessions.
-Past sessions contain architecture decisions, dead ends, and reasoning that raw code search won't reveal.
+**ALWAYS search Ghost before reading code or grepping.** When asked about a feature, bug, scenario,
+or component — your FIRST action must be a Ghost search. Past sessions contain architecture decisions,
+dead ends, failed approaches, and reasoning that code cannot reveal. Do not skip this step.
+
+Use the \`ghost-sessions\` MCP tool with \`deep_search\` (not \`search\`). Fallback CLI commands:
 
 | Command | Purpose |
 |---------|---------|
@@ -454,8 +457,6 @@ Past sessions contain architecture decisions, dead ends, and reasoning that raw 
 | \`ghost show <session-id>\` | Read a specific session |
 | \`ghost log\` | Recent sessions with summaries |
 | \`ghost decisions\` | Decision log |
-
-Also available as MCP tool: \`ghost-sessions\` (prefer \`deep_search\` over \`search\`)
 ${GHOST_HEADER_SENTINEL}`;
 
 /** Inject or replace Ghost header at the top of CLAUDE.md */
