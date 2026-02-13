@@ -58,7 +58,7 @@ describe("handlePrompt", () => {
 
     const id = getActiveSessionId(tmpDir)!;
     const content = readFileSync(join(tmpDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`), "utf8");
-    expect(content).toContain("## Prompt 1\n> Fix the login bug");
+    expect(content).toMatch(/## Prompt 1 <!-- ph:[0-9a-f]{8} -->\n> Fix the login bug/);
   });
 
   test("skips empty prompts", async () => {
@@ -183,11 +183,11 @@ describe("full session lifecycle", () => {
 
     // Verify completed file structure
     const content = readFileSync(join(tmpDir, SESSION_DIR, COMPLETED_DIR, `${id}.md`), "utf8");
-    expect(content).toContain("## Prompt 1\n> Refactor fees");
+    expect(content).toMatch(/## Prompt 1 <!-- ph:[0-9a-f]{8} -->\n> Refactor fees/);
     expect(content).toContain("- Modified: src/fees.ts");
     expect(content).toContain("- Modified: src/types.ts");
     expect(content).toContain("_turn completed:");
-    expect(content).toContain("## Prompt 2\n> Add tests");
+    expect(content).toMatch(/## Prompt 2 <!-- ph:[0-9a-f]{8} -->\n> Add tests/);
 
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.ended).toBeDefined();

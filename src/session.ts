@@ -163,6 +163,11 @@ export function getPromptCount(repoRoot: string, claudeSessionId?: string): numb
 // Session Appenders
 // =============================================================================
 
+/** Compute a short hash for prompt dedup — first 8 hex chars of MD5 */
+export function promptHash(text: string): string {
+  return crypto.createHash("md5").update(text).digest("hex").slice(0, 8);
+}
+
 /** Append a user prompt to the active session (deduplicates consecutive identical prompts) */
 export function appendPrompt(repoRoot: string, claudeSessionIdOrPrompt: string, promptText?: string): void {
   // Support both old (repoRoot, prompt) and new (repoRoot, claudeSessionId, prompt) signatures
@@ -178,21 +183,29 @@ export function appendPrompt(repoRoot: string, claudeSessionIdOrPrompt: string, 
   const path = claudeSessionId ? getSessionPathForHook(repoRoot, claudeSessionId) : getActiveSessionPath(repoRoot);
   if (!path) return;
 
-  // Dedup: skip if last recorded prompt is identical
-  // Compare first line only — multiline prompts are stored as "> first line\nrest..."
-  // so extracting the full prompt back from the file isn't reliable
+  const hash = promptHash(prompt);
+
+  // Dedup: compare hash of incoming prompt against last recorded prompt hash
   if (existsSync(path)) {
     const content = readFileSync(path, "utf8");
-    const lastPrompt = content.match(/^> (.+)$/gm);
-    if (lastPrompt && lastPrompt.length > 0) {
-      const lastText = lastPrompt[lastPrompt.length - 1]!.slice(2); // strip "> "
-      const firstLine = prompt.split("\n")[0]!;
-      if (lastText === firstLine || lastText === prompt) return;
+    const hashMatches = content.match(/<!-- ph:([0-9a-f]{8}) -->/g);
+    if (hashMatches && hashMatches.length > 0) {
+      // Extract the hash value from the last match
+      const lastMatch = hashMatches[hashMatches.length - 1]!.match(/<!-- ph:([0-9a-f]{8}) -->/);
+      if (lastMatch && lastMatch[1] === hash) return;
+    } else {
+      // Legacy fallback: no hash comments found, compare first line
+      const lastPrompt = content.match(/^> (.+)$/gm);
+      if (lastPrompt && lastPrompt.length > 0) {
+        const lastText = lastPrompt[lastPrompt.length - 1]!.slice(2); // strip "> "
+        const firstLine = prompt.split("\n")[0]!;
+        if (lastText === firstLine || lastText === prompt) return;
+      }
     }
   }
 
   const n = getPromptCount(repoRoot, claudeSessionId) + 1;
-  const block = `\n## Prompt ${n}\n> ${prompt}\n`;
+  const block = `\n## Prompt ${n} <!-- ph:${hash} -->\n> ${prompt}\n`;
   appendFileSync(path, block);
 }
 

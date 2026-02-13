@@ -30,6 +30,7 @@ import {
   listTags,
   parseFrontmatter,
   parseKnowledgeEntries,
+  promptHash,
   readSessionMap,
   resolveGhostId,
 } from "./session.js";
@@ -117,15 +118,15 @@ describe("getActiveSessionId", () => {
 });
 
 describe("appendPrompt", () => {
-  test("appends numbered prompt to session", async () => {
+  test("appends numbered prompt with hash to session", async () => {
     await createSession(tmpDir);
     appendPrompt(tmpDir, "Fix the login bug");
     appendPrompt(tmpDir, "Add tests for it");
 
     const path = getActiveSessionPath(tmpDir)!;
     const content = readFileSync(path, "utf8");
-    expect(content).toContain("## Prompt 1\n> Fix the login bug");
-    expect(content).toContain("## Prompt 2\n> Add tests for it");
+    expect(content).toMatch(/## Prompt 1 <!-- ph:[0-9a-f]{8} -->\n> Fix the login bug/);
+    expect(content).toMatch(/## Prompt 2 <!-- ph:[0-9a-f]{8} -->\n> Add tests for it/);
   });
 
   test("increments prompt count correctly", async () => {
@@ -135,6 +136,67 @@ describe("appendPrompt", () => {
     expect(getPromptCount(tmpDir)).toBe(1);
     appendPrompt(tmpDir, "Second");
     expect(getPromptCount(tmpDir)).toBe(2);
+  });
+});
+
+describe("appendPrompt dedup", () => {
+  test("identical single-line prompt is deduped", async () => {
+    await createSession(tmpDir);
+    appendPrompt(tmpDir, "Fix the login bug");
+    appendPrompt(tmpDir, "Fix the login bug");
+    appendPrompt(tmpDir, "Fix the login bug");
+
+    expect(getPromptCount(tmpDir)).toBe(1);
+  });
+
+  test("identical multiline prompt is deduped", async () => {
+    await createSession(tmpDir);
+    const multiline = "Fix the login bug\nAlso handle the edge case\nAnd add tests";
+    appendPrompt(tmpDir, multiline);
+    appendPrompt(tmpDir, multiline);
+
+    expect(getPromptCount(tmpDir)).toBe(1);
+  });
+
+  test("different prompts with same first line are NOT deduped", async () => {
+    await createSession(tmpDir);
+    appendPrompt(tmpDir, "Fix the bug\nin the login flow");
+    appendPrompt(tmpDir, "Fix the bug\nin the checkout flow");
+
+    expect(getPromptCount(tmpDir)).toBe(2);
+  });
+
+  test("prompt hash is written to heading", async () => {
+    await createSession(tmpDir);
+    const prompt = "Fix the login bug";
+    appendPrompt(tmpDir, prompt);
+
+    const path = getActiveSessionPath(tmpDir)!;
+    const content = readFileSync(path, "utf8");
+    const expectedHash = promptHash(prompt);
+    expect(content).toContain(`<!-- ph:${expectedHash} -->`);
+  });
+
+  test("dedup works with legacy format (no hash — falls back to first-line check)", async () => {
+    await createSession(tmpDir);
+
+    // Manually write a legacy-format prompt (no hash comment)
+    const path = getActiveSessionPath(tmpDir)!;
+    const { appendFileSync } = await import("node:fs");
+    appendFileSync(path, "\n## Prompt 1\n> Fix the login bug\n");
+
+    // Attempting to append the same prompt should be deduped via legacy fallback
+    appendPrompt(tmpDir, "Fix the login bug");
+    expect(getPromptCount(tmpDir)).toBe(1);
+  });
+
+  test("dedup with claudeSessionId works", async () => {
+    await createSession(tmpDir, "claude-dedup-test");
+    appendPrompt(tmpDir, "claude-dedup-test", "Same prompt");
+    appendPrompt(tmpDir, "claude-dedup-test", "Same prompt");
+    appendPrompt(tmpDir, "claude-dedup-test", "Same prompt");
+
+    expect(getPromptCount(tmpDir, "claude-dedup-test")).toBe(1);
   });
 });
 
