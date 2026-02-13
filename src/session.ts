@@ -1,6 +1,15 @@
 import { execSync } from "node:child_process";
 import crypto from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
 import { addNoteFromFile, currentBranch, diffStat, headSha } from "./git.js";
@@ -427,8 +436,9 @@ export async function findRecentSession(repoRoot: string): Promise<string | null
 
   const files = readdirSync(compDir)
     .filter((f) => f.endsWith(".md"))
-    .sort()
-    .reverse();
+    .sort((a, b) => {
+      return statSync(join(compDir, b)).mtimeMs - statSync(join(compDir, a)).mtimeMs;
+    });
   const cutoff = Date.now() - 24 * 60 * 60 * 1000;
 
   for (const file of files) {
@@ -986,8 +996,9 @@ export function getMostRecentCompletedId(repoRoot: string): string | null {
   if (!existsSync(compDir)) return null;
   const files = readdirSync(compDir)
     .filter((f) => f.endsWith(".md"))
-    .sort()
-    .reverse();
+    .sort((a, b) => {
+      return statSync(join(compDir, b)).mtimeMs - statSync(join(compDir, a)).mtimeMs;
+    });
   if (files.length === 0) return null;
   return files[0]!.replace(".md", "");
 }
@@ -996,11 +1007,11 @@ export function getMostRecentCompletedId(repoRoot: string): string | null {
 export function listCompletedSessions(repoRoot: string): string[] {
   const compDir = completedDir(repoRoot);
   if (!existsSync(compDir)) return [];
-  return readdirSync(compDir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => f.replace(".md", ""))
-    .sort()
-    .reverse();
+  const files = readdirSync(compDir).filter((f) => f.endsWith(".md"));
+  files.sort((a, b) => {
+    return statSync(join(compDir, b)).mtimeMs - statSync(join(compDir, a)).mtimeMs;
+  });
+  return files.map((f) => f.replace(".md", ""));
 }
 
 /** Parse YAML frontmatter from a markdown file */
