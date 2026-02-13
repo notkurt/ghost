@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { $ } from "bun";
 
 // =============================================================================
@@ -8,6 +9,16 @@ export interface DepStatus {
   available: boolean;
   version?: string;
   path?: string;
+}
+
+// Ensure common binary paths are on PATH — Claude Code hooks run in a
+// restricted environment that often omits ~/.bun/bin, /opt/homebrew/bin, etc.
+const home = homedir();
+const extraPaths = [`${home}/.bun/bin`, "/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`];
+const currentPath = process.env.PATH || "";
+const missing = extraPaths.filter((p) => !currentPath.split(":").includes(p));
+if (missing.length > 0) {
+  process.env.PATH = [...missing, currentPath].join(":");
 }
 
 // Cache results per process
