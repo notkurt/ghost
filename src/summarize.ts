@@ -41,6 +41,14 @@ The Tried:, Files:, and Rule: lines are optional — omit if not applicable.
 ## Open Items
 Anything left unfinished or flagged for follow-up
 
+## Relevance
+Assess whether this session contains knowledge worth preserving for future project context.
+Write "skip" on its own line if the session is NOT relevant — e.g. test/demo chats, conversations about
+the AI itself, troubleshooting the tooling rather than the project, trivial or throwaway interactions,
+or anything that would add noise rather than signal to the project knowledge base.
+Write "keep" on its own line if the session contains useful project context (decisions, patterns, mistakes, etc.).
+Default to "keep" if uncertain.
+
 ## Tags
 Comma-separated topic tags inferred from the session content.
 Use namespace:value format where appropriate (e.g. area:cart, type:bug-fix).`;
@@ -87,6 +95,7 @@ export interface ExtractedSections {
   intent: string;
   changes: string;
   openItems: string;
+  skipKnowledge: boolean;
 }
 
 /** Extract structured sections from an AI summary */
@@ -98,7 +107,15 @@ export function extractSections(summary: string): ExtractedSections {
     intent: extractNamedSection(summary, "Intent"),
     changes: extractNamedSection(summary, "Changes"),
     openItems: extractNamedSection(summary, "Open Items"),
+    skipKnowledge: extractSkipKnowledge(summary),
   };
+}
+
+/** Check if the AI flagged this session as not worth preserving */
+function extractSkipKnowledge(summary: string): boolean {
+  const section = extractNamedSection(summary, "Relevance");
+  if (!section) return false;
+  return /^\s*skip\s*$/im.test(section);
 }
 
 /** Extract tags from the Tags section */

@@ -193,6 +193,85 @@ Rule: WHEN adding cache layers ALWAYS use Redis`;
   });
 });
 
+describe("extractSections — skipKnowledge", () => {
+  test("returns skipKnowledge=true when Relevance is 'skip'", () => {
+    const summary = `## Intent
+Testing the AI tool.
+
+## Changes
+- No real changes.
+
+## Decisions
+None
+
+## Mistakes
+None
+
+## Open Items
+None
+
+## Relevance
+skip
+
+## Tags
+test`;
+
+    const sections = extractSections(summary);
+    expect(sections.skipKnowledge).toBe(true);
+  });
+
+  test("returns skipKnowledge=false when Relevance is 'keep'", () => {
+    const summary = `## Intent
+Migrate cart system.
+
+## Changes
+- Updated fees.
+
+## Decisions
+None
+
+## Mistakes
+None
+
+## Open Items
+None
+
+## Relevance
+keep
+
+## Tags
+area:cart`;
+
+    const sections = extractSections(summary);
+    expect(sections.skipKnowledge).toBe(false);
+  });
+
+  test("returns skipKnowledge=false when Relevance section is missing", () => {
+    const summary = `## Intent
+Quick fix.
+
+## Tags
+fix`;
+
+    const sections = extractSections(summary);
+    expect(sections.skipKnowledge).toBe(false);
+  });
+
+  test("handles case-insensitive 'Skip'", () => {
+    const summary = `## Intent
+Test chat.
+
+## Relevance
+Skip
+
+## Tags
+test`;
+
+    const sections = extractSections(summary);
+    expect(sections.skipKnowledge).toBe(true);
+  });
+});
+
 describe("extractMistakeEntries — junk filtering", () => {
   test("filters 'None' variations", () => {
     expect(extractMistakeEntries("## Mistakes\nNone")).toEqual([]);

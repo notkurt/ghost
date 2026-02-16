@@ -4,7 +4,14 @@ import { checkClaude } from "./deps.js";
 import { completedDir, decisionsPath, knowledgePath, mistakesPath, SESSION_DIR } from "./paths.js";
 import { searchSessions } from "./qmd.js";
 import type { KnowledgeEntry } from "./session.js";
-import { appendDecision, appendMistake, deriveArea, listCompletedSessions, parseKnowledgeEntries } from "./session.js";
+import {
+  appendDecision,
+  appendMistake,
+  deriveArea,
+  listCompletedSessions,
+  parseFrontmatter,
+  parseKnowledgeEntries,
+} from "./session.js";
 
 // =============================================================================
 // Claude CLI Check
@@ -66,16 +73,25 @@ export async function buildKnowledge(repoRoot: string): Promise<void> {
     return;
   }
 
-  // Gather all session summaries
+  // Gather all session summaries (skip sessions flagged as not relevant)
   const summaries: string[] = [];
+  let skippedCount = 0;
   for (const id of sessions) {
     const path = join(completedDir(repoRoot), `${id}.md`);
     if (!existsSync(path)) continue;
     const content = readFileSync(path, "utf8");
+    const { frontmatter } = parseFrontmatter(content);
+    if (frontmatter.skip_knowledge) {
+      skippedCount++;
+      continue;
+    }
     const summaryMatch = content.match(/## Summary\n([\s\S]*?)$/);
     if (summaryMatch) {
       summaries.push(`### Session ${id}\n${summaryMatch[1]!.trim()}`);
     }
+  }
+  if (skippedCount > 0) {
+    console.log(`Skipped ${skippedCount} session(s) flagged as not relevant.`);
   }
 
   if (summaries.length === 0) {

@@ -1027,7 +1027,7 @@ export function parseFrontmatter(content: string): { frontmatter: Record<string,
 }
 
 /** Add a field to existing frontmatter */
-function addFrontmatterField(content: string, key: string, value: unknown): string {
+export function addFrontmatterField(content: string, key: string, value: unknown): string {
   const parsed = parseFrontmatter(content);
   parsed.frontmatter[key] = value;
   return `---\n${YAML.stringify(parsed.frontmatter).trim()}\n---\n${parsed.body}`;
