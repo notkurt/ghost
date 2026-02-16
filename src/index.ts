@@ -327,7 +327,8 @@ if (import.meta.main) {
           const { frontmatter } = parseFrontmatter(content);
           const tags = (frontmatter.tags as string[]) || [];
           const tagStr = tags.length > 0 ? ` ${c.dim}[${tags.join(", ")}]${c.reset}` : "";
-          console.log(`${c.cyan}${id}${c.reset} ${c.dim}${frontmatter.branch || ""}${c.reset}${tagStr}`);
+          const skipStr = frontmatter.skip_knowledge ? ` ${c.dim}(skipped)${c.reset}` : "";
+          console.log(`${c.cyan}${id}${c.reset} ${c.dim}${frontmatter.branch || ""}${c.reset}${tagStr}${skipStr}`);
         }
         if (sessions.length > count) {
           console.log(`${c.dim}... and ${sessions.length - count} more${c.reset}`);

@@ -12,6 +12,7 @@ import { SESSION_DIR } from "./paths.js";
 import { indexSession } from "./qmd.js";
 import { redactSecrets } from "./redact.js";
 import {
+  addFrontmatterField,
   addTags,
   appendDecision,
   appendMistake,
@@ -94,79 +95,90 @@ try {
     // 2. Extract tags, decisions, mistakes
     const sections = extractSections(summary);
 
+    // Check if AI flagged this session as not relevant for knowledge
+    if (sections.skipKnowledge) {
+      log("Session flagged as skip_knowledge by AI — skipping knowledge ingestion");
+      // Mark in frontmatter so downstream consumers can filter
+      const currentContent = readFileSync(sessionPath, "utf8");
+      const updated = addFrontmatterField(currentContent, "skip_knowledge", true);
+      writeFileSync(sessionPath, updated);
+    }
+
     if (sections.tags.length > 0) {
       addTags(repoRoot, sessionId, sections.tags);
       log(`Tagged: ${sections.tags.join(", ")}`);
     }
 
-    // Read session data for context
-    const sessionContent = readFileSync(sessionPath, "utf8");
-    const { frontmatter } = parseFrontmatter(sessionContent);
-    const modifiedFiles = extractModifiedFiles(sessionContent);
-    const commitSha = (frontmatter.base_commit as string) || "unknown";
-    const sessionDate = sessionId.slice(0, 10);
+    if (!sections.skipKnowledge) {
+      // Read session data for context
+      const sessionContent = readFileSync(sessionPath, "utf8");
+      const { frontmatter } = parseFrontmatter(sessionContent);
+      const modifiedFiles = extractModifiedFiles(sessionContent);
+      const commitSha = (frontmatter.base_commit as string) || "unknown";
+      const sessionDate = sessionId.slice(0, 10);
 
-    for (const decision of sections.decisions) {
-      const { title, description } = parseTitleDescription(decision.text);
-      if (isJunkEntry(title)) continue;
-      const files = decision.files.length > 0 ? decision.files : modifiedFiles.slice(0, 5);
-      appendDecision(repoRoot, {
-        title,
-        description,
-        sessionId,
-        commitSha,
-        files,
-        area: deriveArea(files),
-        date: sessionDate,
-        tried: decision.tried,
-        rule: decision.rule,
-      });
-    }
-    if (sections.decisions.length > 0) {
-      log(`Logged ${sections.decisions.length} decision(s)`);
-    }
-
-    for (const mistake of sections.mistakes) {
-      const { title, description } = parseTitleDescription(mistake.text);
-      if (isJunkEntry(title)) continue;
-      const files = mistake.files.length > 0 ? mistake.files : modifiedFiles.slice(0, 5);
-      appendMistake(repoRoot, {
-        title,
-        description,
-        sessionId,
-        commitSha,
-        files,
-        area: deriveArea(files),
-        date: sessionDate,
-        tried: mistake.tried,
-        rule: mistake.rule,
-      });
-    }
-    if (sections.mistakes.length > 0) {
-      log(`Logged ${sections.mistakes.length} mistake(s)`);
-    }
-
-    // Auto-detect corrections: files modified in consecutive turns
-    const corrections = detectCorrections(sessionContent);
-    if (corrections.length > 0) {
-      const fileCounts: Record<string, number> = {};
-      for (const c of corrections) {
-        fileCounts[c.file] = (fileCounts[c.file] || 0) + 1;
+      for (const decision of sections.decisions) {
+        const { title, description } = parseTitleDescription(decision.text);
+        if (isJunkEntry(title)) continue;
+        const files = decision.files.length > 0 ? decision.files : modifiedFiles.slice(0, 5);
+        appendDecision(repoRoot, {
+          title,
+          description,
+          sessionId,
+          commitSha,
+          files,
+          area: deriveArea(files),
+          date: sessionDate,
+          tried: decision.tried,
+          rule: decision.rule,
+        });
       }
-      for (const [file, count] of Object.entries(fileCounts)) {
-        if (count >= 2) {
-          appendMistake(repoRoot, {
-            title: `Repeated modifications to ${file}`,
-            description: `File was modified across multiple consecutive turns — may indicate the AI struggled with this file. Review session ${sessionId} for the correct approach.`,
-            sessionId,
-            commitSha,
-            files: [file],
-            area: deriveArea([file]),
-            date: sessionDate,
-            tried: [],
-            rule: "",
-          });
-          log(`Auto-detected correction pattern for ${file}`);
+      if (sections.decisions.length > 0) {
+        log(`Logged ${sections.decisions.length} decision(s)`);
+      }
+
+      for (const mistake of sections.mistakes) {
+        const { title, description } = parseTitleDescription(mistake.text);
+        if (isJunkEntry(title)) continue;
+        const files = mistake.files.length > 0 ? mistake.files : modifiedFiles.slice(0, 5);
+        appendMistake(repoRoot, {
+          title,
+          description,
+          sessionId,
+          commitSha,
+          files,
+          area: deriveArea(files),
+          date: sessionDate,
+          tried: mistake.tried,
+          rule: mistake.rule,
+        });
+      }
+      if (sections.mistakes.length > 0) {
+        log(`Logged ${sections.mistakes.length} mistake(s)`);
+      }
+
+      // Auto-detect corrections: files modified in consecutive turns
+      const corrections = detectCorrections(sessionContent);
+      if (corrections.length > 0) {
+        const fileCounts: Record<string, number> = {};
+        for (const c of corrections) {
+          fileCounts[c.file] = (fileCounts[c.file] || 0) + 1;
+        }
+        for (const [file, count] of Object.entries(fileCounts)) {
+          if (count >= 2) {
+            appendMistake(repoRoot, {
+              title: `Repeated modifications to ${file}`,
+              description: `File was modified across multiple consecutive turns — may indicate the AI struggled with this file. Review session ${sessionId} for the correct approach.`,
+              sessionId,
+              commitSha,
+              files: [file],
+              area: deriveArea([file]),
+              date: sessionDate,
+              tried: [],
+              rule: "",
+            });
+            log(`Auto-detected correction pattern for ${file}`);
+          }
         }
       }
     }
