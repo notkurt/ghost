@@ -9,8 +9,8 @@ import {
   appendMistake,
   deriveArea,
   listCompletedSessions,
-  parseKnowledgeEntries,
   parseFrontmatter,
+  parseKnowledgeEntries,
 } from "./session.js";
 
 // =============================================================================
