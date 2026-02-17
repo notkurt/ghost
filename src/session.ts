@@ -19,10 +19,12 @@ import {
   completedSessionPath,
   currentIdPath,
   decisionsPath,
+  knowledgePath,
   mistakesPath,
   SESSION_DIR,
   sessionFilePath,
   sessionMapPath,
+  strategiesPath,
   tagsPath,
 } from "./paths.js";
 import { redactWithBuiltinPatterns } from "./redact.js";
@@ -468,6 +470,7 @@ export function generateContinuityBlock(repoRoot: string, sessionId: string): st
   const intent = extractSection(content, "Intent");
   const openItems = extractSection(content, "Open Items");
   const decisions = extractSection(content, "Decisions");
+  const strategies = extractSection(content, "Strategies");
   const mistakes = extractSection(content, "Mistakes");
   const files = extractModifiedFiles(content);
 
@@ -482,6 +485,9 @@ export function generateContinuityBlock(repoRoot: string, sessionId: string): st
     block += "\n";
   }
   if (decisions) block += `**Key decisions made:**\n${decisions.trim()}\n\n`;
+  if (strategies && !/^none$/im.test(strategies.trim())) {
+    block += `**Strategies explored:**\n${strategies.trim()}\n\n`;
+  }
   if (mistakes && !mistakes.includes("None this session")) {
     block += `**Watch out for:**\n${mistakes.trim()}\n\n`;
   }
@@ -679,14 +685,90 @@ export function getRelevantDecisions(root: string, relevantFiles: string[], max:
   return parts.join("\n");
 }
 
+/** Get relevant strategies formatted for session injection */
+export function getRelevantStrategies(root: string, relevantFiles: string[], max: number = 5): string | null {
+  const path = strategiesPath(root);
+  if (!existsSync(path)) return null;
+  const content = readFileSync(path, "utf8").trim();
+  if (!content) return null;
+
+  const entries = parseKnowledgeEntries(content);
+  if (entries.length === 0) return null;
+
+  const graph = buildCoModGraph(root);
+  const coModFiles = getCoModifiedFiles(graph, relevantFiles);
+  const relevant = getRelevantEntries(entries, relevantFiles, coModFiles, max);
+  if (relevant.length === 0) return null;
+
+  const parts: string[] = ["> Explored strategies relevant to your current files:"];
+  parts.push(">");
+  for (const e of relevant) {
+    const fileTag = e.files.length > 0 ? ` [${e.files.join(", ")}]` : "";
+    parts.push(`> **${e.title}**${fileTag}`);
+    if (e.description) parts.push(`> ${e.description}`);
+    parts.push(">");
+  }
+
+  return parts.join("\n");
+}
+
+/** Get relevant knowledge formatted for session injection */
+export function getRelevantKnowledge(root: string, relevantFiles: string[], max: number = 5): string | null {
+  const path = knowledgePath(root);
+  if (!existsSync(path)) return null;
+  const content = readFileSync(path, "utf8").trim();
+  if (!content) return null;
+
+  const entries = parseKnowledgeEntries(content);
+  if (entries.length === 0) return null;
+
+  const graph = buildCoModGraph(root);
+  const coModFiles = getCoModifiedFiles(graph, relevantFiles);
+  const relevant = getRelevantEntries(entries, relevantFiles, coModFiles, max);
+  if (relevant.length === 0) return null;
+
+  const parts: string[] = ["> Relevant project knowledge:"];
+  parts.push(">");
+  for (const e of relevant) {
+    const fileTag = e.files.length > 0 ? ` [${e.files.join(", ")}]` : "";
+    parts.push(`> **${e.title}**${fileTag}`);
+    if (e.description) parts.push(`> ${e.description}`);
+    parts.push(">");
+  }
+
+  return parts.join("\n");
+}
+
 // =============================================================================
-// Decisions & Mistakes
+// Deduplication
 // =============================================================================
 
+/** Check if an entry with the same title already exists in a ledger file */
+export function isDuplicateEntry(filePath: string, title: string): boolean {
+  if (!existsSync(filePath)) return false;
+  const content = readFileSync(filePath, "utf8").trim();
+  if (!content) return false;
+  const entries = parseKnowledgeEntries(content);
+  const normalized = title.toLowerCase().trim();
+  return entries.some((e) => e.title.toLowerCase().trim() === normalized);
+}
+
+// =============================================================================
+// Decisions, Mistakes, Strategies & Knowledge
+// =============================================================================
+
+interface AppendOpts {
+  dedup?: boolean;
+}
+
 /** Append a decision to the decision log */
-export function appendDecision(repoRoot: string, decision: KnowledgeEntry | string): void {
+export function appendDecision(repoRoot: string, decision: KnowledgeEntry | string, opts?: AppendOpts): void {
   const path = decisionsPath(repoRoot);
   mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
+  if (opts?.dedup) {
+    const title = typeof decision === "string" ? decision : decision.title;
+    if (isDuplicateEntry(path, title)) return;
+  }
   if (typeof decision === "string") {
     appendFileSync(path, `\n${decision}\n`);
   } else {
@@ -695,13 +777,47 @@ export function appendDecision(repoRoot: string, decision: KnowledgeEntry | stri
 }
 
 /** Append a mistake to the mistake ledger */
-export function appendMistake(repoRoot: string, entry: KnowledgeEntry | string): void {
+export function appendMistake(repoRoot: string, entry: KnowledgeEntry | string, opts?: AppendOpts): void {
   const path = mistakesPath(repoRoot);
   mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
+  if (opts?.dedup) {
+    const title = typeof entry === "string" ? entry : entry.title;
+    if (isDuplicateEntry(path, title)) return;
+  }
   if (typeof entry === "string") {
     appendFileSync(path, `- ${entry}\n`);
   } else {
     appendFileSync(path, `${formatKnowledgeEntry(entry)}\n`);
+  }
+}
+
+/** Append a strategy to the strategies log */
+export function appendStrategy(repoRoot: string, entry: KnowledgeEntry | string, opts?: AppendOpts): void {
+  const path = strategiesPath(repoRoot);
+  mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
+  if (opts?.dedup) {
+    const title = typeof entry === "string" ? entry : entry.title;
+    if (isDuplicateEntry(path, title)) return;
+  }
+  if (typeof entry === "string") {
+    appendFileSync(path, `\n${entry}\n`);
+  } else {
+    appendFileSync(path, `\n${formatKnowledgeEntry(entry)}\n`);
+  }
+}
+
+/** Append a knowledge entry to knowledge.md */
+export function appendKnowledge(repoRoot: string, entry: KnowledgeEntry | string, opts?: AppendOpts): void {
+  const path = knowledgePath(repoRoot);
+  mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
+  if (opts?.dedup) {
+    const title = typeof entry === "string" ? entry : entry.title;
+    if (isDuplicateEntry(path, title)) return;
+  }
+  if (typeof entry === "string") {
+    appendFileSync(path, `\n${entry}\n`);
+  } else {
+    appendFileSync(path, `\n${formatKnowledgeEntry(entry)}\n`);
   }
 }
 

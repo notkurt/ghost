@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import YAML from "yaml";
-import { completedDir, decisionsPath, knowledgePath, mistakesPath, tagsPath } from "./paths.js";
+import { completedDir, decisionsPath, knowledgePath, mistakesPath, strategiesPath, tagsPath } from "./paths.js";
 
 // =============================================================================
 // Validation Types
@@ -239,10 +239,11 @@ export function validate(repoRoot: string, opts?: { fix?: boolean }): Validation
     }
   }
 
-  // Check mistakes.md and decisions.md aren't malformed
+  // Check mistakes.md, decisions.md, and strategies.md aren't malformed
   for (const [name, path] of [
     ["mistakes.md", mistakesPath(repoRoot)],
     ["decisions.md", decisionsPath(repoRoot)],
+    ["strategies.md", strategiesPath(repoRoot)],
   ] as const) {
     if (existsSync(path)) {
       try {

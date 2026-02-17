@@ -466,6 +466,10 @@ Use the \`ghost-sessions\` MCP tool with \`deep_search\` (not \`search\`). Fallb
 | \`ghost show <session-id>\` | Read a specific session |
 | \`ghost log\` | Recent sessions with summaries |
 | \`ghost decisions\` | Decision log |
+| \`ghost decision "desc"\` | Log a technical decision mid-session |
+| \`ghost mistake "desc"\` | Log a mistake or gotcha mid-session |
+| \`ghost knowledge "desc"\` | Log an insight or pattern mid-session |
+| \`ghost strategy "desc"\` | Log a trade-off explored mid-session |
 ${GHOST_HEADER_SENTINEL}`;
 
 /** Inject or replace Ghost header at the top of CLAUDE.md */

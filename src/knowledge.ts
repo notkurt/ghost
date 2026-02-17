@@ -1,15 +1,15 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { checkClaude } from "./deps.js";
-import { completedDir, decisionsPath, knowledgePath, mistakesPath, SESSION_DIR } from "./paths.js";
+import { completedDir, decisionsPath, knowledgePath, mistakesPath, SESSION_DIR, strategiesPath } from "./paths.js";
 import { searchSessions } from "./qmd.js";
 import type { KnowledgeEntry } from "./session.js";
 import {
   appendDecision,
   appendMistake,
   deriveArea,
+  formatKnowledgeEntry,
   listCompletedSessions,
-  parseFrontmatter,
   parseKnowledgeEntries,
 } from "./session.js";
 
@@ -31,114 +31,159 @@ async function requireClaude(action: string): Promise<boolean> {
 // Knowledge Base
 // =============================================================================
 
-const KNOWLEDGE_PROMPT = `You are consolidating AI coding session summaries into a project knowledge base.
-Read the existing knowledge base (if any) and the new session summaries.
-Merge new information into the knowledge base, updating existing sections and adding new ones as needed.
-Keep the following fixed sections:
+const KNOWLEDGE_PROMPT = `You are consolidating structured knowledge entries from an AI coding session knowledge base.
+You receive existing entries in ### Title format with <!-- metadata --> comments.
 
-# Project Knowledge Base
+Your job:
+1. Deduplicate entries that describe the same thing (keep the most complete version)
+2. Merge related entries where appropriate
+3. Remove outdated entries that contradict newer ones
+4. Preserve all <!-- metadata --> comments exactly as-is (do not modify session/date/files info)
+5. Keep entries that are still relevant
 
-## Architecture
-Key architectural patterns, file structure, tech stack.
+Output ONLY the consolidated entries in the same format:
+### Title
+Description
+<!-- session:id | files:path1,path2 | area:name | date:YYYY-MM-DD -->
 
-## Conventions
-Coding conventions, naming patterns, testing approaches.
+Do NOT add section headers, preamble, or commentary. Just output the entries.`;
 
-## Key Decisions
-Important technical decisions organized by component area.
-Include file paths so the AI knows exactly where decisions apply.
-If a decision includes an assertion rule, preserve it verbatim.
+/** Check if knowledge.md is in old free-form format (not entry-based) */
+export function isOldKnowledgeFormat(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  // Old format: starts with _ (auto-generated header) or # (markdown heading), not ### (entries)
+  // Entry format: first non-empty, non-header line starts with ###
+  const lines = trimmed.split("\n").filter((l) => l.trim());
+  for (const line of lines) {
+    if (line.startsWith("_")) continue; // Skip auto-generated header
+    if (line.startsWith("### ")) return false; // Entry format
+    if (line.startsWith("# ") || line.startsWith("## ")) return true; // Old section-based format
+    return true; // Any other content = old format
+  }
+  return false;
+}
 
-## Gotchas
-Known issues organized by component area.
-Include file paths and dead-end approaches (what was tried and failed).
-If a gotcha includes an assertion rule, preserve it verbatim.
-Deduplicate entries describing the same issue.
+/** Migrate old free-form knowledge.md to structured entry format */
+export async function migrateKnowledge(repoRoot: string): Promise<boolean> {
+  const kPath = knowledgePath(repoRoot);
+  if (!existsSync(kPath)) return false;
 
-## Patterns That Work
-Proven approaches for common tasks.
+  const content = readFileSync(kPath, "utf8");
+  if (!isOldKnowledgeFormat(content)) return false;
 
-## Open Threads
-Unresolved items, things still being explored.
+  if (!(await requireClaude("knowledge migration"))) return false;
 
-Keep it concise. Remove outdated info. Add date references where helpful.`;
+  console.log("Migrating knowledge.md from free-form to structured entry format...");
 
-/** Rebuild the knowledge base from all completed sessions */
+  const migratePrompt = `Convert this free-form knowledge base into individual structured entries.
+
+Each entry should be:
+### Title
+Description of the knowledge/insight
+<!-- session:migrated | area:{area} | date:${new Date().toISOString().slice(0, 10)} -->
+
+Where {area} is derived from the section or context (e.g., "architecture", "conventions", "general").
+If file paths are mentioned, add them: <!-- session:migrated | files:path1,path2 | area:{area} | date:${new Date().toISOString().slice(0, 10)} -->
+
+Output ONLY the entries. No preamble or commentary.`;
+
+  try {
+    const proc = Bun.spawn(["claude", "-p", migratePrompt], {
+      stdin: new TextEncoder().encode(content),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, GHOST_INTERNAL: "1" },
+    });
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (exitCode !== 0) {
+      console.error("Knowledge migration failed — claude CLI returned non-zero.");
+      return false;
+    }
+
+    // Back up original
+    copyFileSync(kPath, `${kPath}.pre-migrate`);
+    console.log("Backed up original as knowledge.md.pre-migrate");
+
+    const header = `_Auto-generated by Ghost. Last updated: ${new Date().toISOString().slice(0, 10)}_\n\n`;
+    writeFileSync(kPath, `${header}${stdout.trim()}\n`);
+    console.log("Knowledge migrated to structured entry format.");
+    return true;
+  } catch (err) {
+    console.error(`Knowledge migration failed: ${err instanceof Error ? err.message : String(err)}`);
+    return false;
+  }
+}
+
+/** Rebuild the knowledge base by consolidating/deduplicating entries */
 export async function buildKnowledge(repoRoot: string): Promise<void> {
   if (!(await requireClaude("knowledge build"))) return;
 
-  const sessions = listCompletedSessions(repoRoot);
-  if (sessions.length === 0) {
-    console.log("No completed sessions to build knowledge from.");
-    return;
-  }
-
-  // Gather all session summaries (skip sessions flagged as not relevant)
-  const summaries: string[] = [];
-  let skippedCount = 0;
-  for (const id of sessions) {
-    const path = join(completedDir(repoRoot), `${id}.md`);
-    if (!existsSync(path)) continue;
-    const content = readFileSync(path, "utf8");
-    const { frontmatter } = parseFrontmatter(content);
-    if (frontmatter.skip_knowledge) {
-      skippedCount++;
-      continue;
-    }
-    const summaryMatch = content.match(/## Summary\n([\s\S]*?)$/);
-    if (summaryMatch) {
-      summaries.push(`### Session ${id}\n${summaryMatch[1]!.trim()}`);
+  // Auto-migrate old format if detected
+  const kPath = knowledgePath(repoRoot);
+  if (existsSync(kPath)) {
+    const content = readFileSync(kPath, "utf8");
+    if (isOldKnowledgeFormat(content)) {
+      await migrateKnowledge(repoRoot);
     }
   }
-  if (skippedCount > 0) {
-    console.log(`Skipped ${skippedCount} session(s) flagged as not relevant.`);
-  }
 
-  if (summaries.length === 0) {
-    console.log("No session summaries found. Run sessions first or wait for AI summarization.");
-    return;
-  }
+  // Gather all entries from knowledge.md
+  const existingKnowledge = existsSync(knowledgePath(repoRoot)) ? readFileSync(knowledgePath(repoRoot), "utf8") : "";
+  const knowledgeEntries = parseKnowledgeEntries(existingKnowledge);
 
-  const existing = existsSync(knowledgePath(repoRoot)) ? readFileSync(knowledgePath(repoRoot), "utf8") : "";
-
-  // Build structured knowledge grouped by area
-  const mistakeEntries = parseKnowledgeEntries(
-    existsSync(mistakesPath(repoRoot)) ? readFileSync(mistakesPath(repoRoot), "utf8") : "",
-  );
+  // Also include entries from decisions, mistakes, and strategies for comprehensive consolidation
   const decisionEntries = parseKnowledgeEntries(
     existsSync(decisionsPath(repoRoot)) ? readFileSync(decisionsPath(repoRoot), "utf8") : "",
   );
+  const mistakeEntries = parseKnowledgeEntries(
+    existsSync(mistakesPath(repoRoot)) ? readFileSync(mistakesPath(repoRoot), "utf8") : "",
+  );
+  const strategyEntries = parseKnowledgeEntries(
+    existsSync(strategiesPath(repoRoot)) ? readFileSync(strategiesPath(repoRoot), "utf8") : "",
+  );
 
-  const byArea: Record<string, { mistakes: KnowledgeEntry[]; decisions: KnowledgeEntry[] }> = {};
-  for (const e of mistakeEntries) {
-    if (!byArea[e.area]) byArea[e.area] = { mistakes: [], decisions: [] };
-    byArea[e.area]!.mistakes.push(e);
-  }
-  for (const e of decisionEntries) {
-    if (!byArea[e.area]) byArea[e.area] = { mistakes: [], decisions: [] };
-    byArea[e.area]!.decisions.push(e);
+  if (
+    knowledgeEntries.length === 0 &&
+    decisionEntries.length === 0 &&
+    mistakeEntries.length === 0 &&
+    strategyEntries.length === 0
+  ) {
+    console.log("No entries found to consolidate. Run sessions first.");
+    return;
   }
 
-  let structuredInput = "";
-  if (Object.keys(byArea).length > 0) {
-    structuredInput = "\nSTRUCTURED KNOWLEDGE BY AREA:\n";
-    for (const [area, data] of Object.entries(byArea)) {
-      structuredInput += `\n### Area: ${area}\n`;
-      for (const m of data.mistakes) {
-        structuredInput += `- MISTAKE: ${m.title} (files: ${m.files.join(", ")})`;
-        if (m.tried.length) structuredInput += ` [tried: ${m.tried.join(", ")}]`;
-        if (m.rule) structuredInput += ` [RULE: ${m.rule}]`;
-        structuredInput += `\n  ${m.description}\n`;
-      }
-      for (const d of data.decisions) {
-        structuredInput += `- DECISION: ${d.title} (files: ${d.files.join(", ")})`;
-        if (d.rule) structuredInput += ` [RULE: ${d.rule}]`;
-        structuredInput += `\n  ${d.description}\n`;
-      }
+  // Build input from all knowledge entries
+  let input = "";
+  if (knowledgeEntries.length > 0) {
+    input += "KNOWLEDGE ENTRIES:\n";
+    for (const e of knowledgeEntries) {
+      input += `${formatKnowledgeEntry(e)}\n\n`;
+    }
+  }
+  if (decisionEntries.length > 0) {
+    input += "\nDECISION ENTRIES (for context — do not include in output unless they contain general knowledge):\n";
+    for (const e of decisionEntries) {
+      input += `${formatKnowledgeEntry(e)}\n\n`;
+    }
+  }
+  if (strategyEntries.length > 0) {
+    input += "\nSTRATEGY ENTRIES (for context — promote to knowledge if they contain reusable insights):\n";
+    for (const e of strategyEntries) {
+      input += `${formatKnowledgeEntry(e)}\n\n`;
+    }
+  }
+  if (mistakeEntries.length > 0) {
+    input += "\nMISTAKE ENTRIES (for context only — do not include in output):\n";
+    for (const e of mistakeEntries) {
+      input += `${formatKnowledgeEntry(e)}\n\n`;
     }
   }
 
-  const input = `${existing ? `EXISTING KNOWLEDGE BASE:\n${existing}\n\n` : ""}NEW SESSION SUMMARIES:\n${summaries.join("\n\n")}${structuredInput}`;
+  console.log(
+    `Consolidating ${knowledgeEntries.length} knowledge entries (with ${decisionEntries.length} decisions, ${strategyEntries.length} strategies, ${mistakeEntries.length} mistakes as context)...`,
+  );
 
   try {
     const proc = Bun.spawn(["claude", "-p", KNOWLEDGE_PROMPT], {
@@ -155,8 +200,10 @@ export async function buildKnowledge(repoRoot: string): Promise<void> {
     }
     mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
     const header = `_Auto-generated by Ghost. Last updated: ${new Date().toISOString().slice(0, 10)}_\n\n`;
-    writeFileSync(knowledgePath(repoRoot), `${header + stdout.trim()}\n`);
-    console.log("Knowledge base rebuilt.");
+    writeFileSync(knowledgePath(repoRoot), `${header}${stdout.trim()}\n`);
+
+    const newEntries = parseKnowledgeEntries(stdout);
+    console.log(`Knowledge base rebuilt: ${knowledgeEntries.length} → ${newEntries.length} entries.`);
   } catch (err) {
     console.error(`Knowledge build failed: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -170,10 +217,37 @@ export async function injectKnowledge(repoRoot: string): Promise<void> {
     return;
   }
 
+  const content = readFileSync(kPath, "utf8");
+  const entries = parseKnowledgeEntries(content);
+
+  // Render entries grouped by area
+  let rendered: string;
+  if (entries.length > 0) {
+    const byArea: Record<string, KnowledgeEntry[]> = {};
+    for (const e of entries) {
+      const area = e.area || "general";
+      if (!byArea[area]) byArea[area] = [];
+      byArea[area]!.push(e);
+    }
+
+    const parts: string[] = ["# Project Knowledge Base\n"];
+    for (const [area, areaEntries] of Object.entries(byArea).sort(([a], [b]) => a.localeCompare(b))) {
+      parts.push(`## ${area.charAt(0).toUpperCase() + area.slice(1)}\n`);
+      for (const e of areaEntries) {
+        const fileTag = e.files.length > 0 ? ` (${e.files.join(", ")})` : "";
+        parts.push(`- **${e.title}**${fileTag}: ${e.description}`);
+      }
+      parts.push("");
+    }
+    rendered = parts.join("\n");
+  } else {
+    // Fallback: use raw content if no entries parsed
+    rendered = content;
+  }
+
   const claudeMdPath = join(repoRoot, "CLAUDE.md");
-  const knowledge = readFileSync(kPath, "utf8");
   const marker = "<!-- ghost:knowledge -->";
-  const block = `\n${marker}\n${knowledge}\n${marker}\n`;
+  const block = `\n${marker}\n${rendered}\n${marker}\n`;
 
   if (existsSync(claudeMdPath)) {
     const existing = readFileSync(claudeMdPath, "utf8");
@@ -263,6 +337,14 @@ export async function generateBrief(repoRoot: string, description: string): Prom
     }
   }
 
+  // Include strategies
+  if (existsSync(strategiesPath(repoRoot))) {
+    const strategies = readFileSync(strategiesPath(repoRoot), "utf8");
+    if (strategies.trim()) {
+      parts.push(`EXPLORED STRATEGIES:\n${strategies}\n`);
+    }
+  }
+
   // Include file heatmap data
   const heatmap = buildHeatmapData(repoRoot);
   if (heatmap.length > 0) {
@@ -319,30 +401,24 @@ export function buildHeatmapData(repoRoot: string, sessionIds?: string[]): [stri
 // Genesis — Initial Knowledge Base from Codebase
 // =============================================================================
 
-const GENESIS_PROMPT = `Analyze this codebase and generate an initial project knowledge base. This is the first time the project is being documented, so there are no prior sessions to draw from.
+const GENESIS_PROMPT = `Analyze this codebase and generate an initial project knowledge base as structured entries.
 
-Return markdown with these sections:
+Each entry should be in this exact format:
+### Title
+Description of the knowledge/insight
+<!-- session:genesis | files:relevant/file/paths | area:{area} | date:${new Date().toISOString().slice(0, 10)} -->
 
-# Project Knowledge Base
+Cover these areas:
+- Architecture: key patterns, file structure, tech stack, frameworks
+- Conventions: coding conventions, naming patterns, testing approaches
+- Key files: important files and what they do (entry points, config, core logic)
+- Gotchas: potential issues, missing error handling, unusual patterns
+- Patterns: common patterns used throughout the codebase
 
-## Architecture
-Key architectural patterns, file structure, tech stack. What frameworks, libraries, and languages are used? How is the code organized?
+Use descriptive area names like "architecture", "conventions", "general", or component-specific names.
+Include relevant file paths in the files: metadata where applicable.
 
-## Conventions
-Coding conventions you observe: naming patterns, module structure, testing approaches, import style.
-
-## Key Files
-The most important files and what they do. Focus on entry points, config, and core business logic.
-
-## Gotchas
-Any potential issues you notice: missing error handling, hardcoded values, unusual patterns, things a developer should watch out for.
-
-## Patterns That Work
-Common patterns used throughout the codebase that should be followed for consistency.
-
-## Open Threads
-Areas that look incomplete, TODOs in the code, or things that might need attention.
-
+Output ONLY the entries. No preamble, section headers, or commentary.
 Keep it concise and factual. Only document what you can observe in the code.`;
 
 /** Build an initial knowledge base by analyzing the codebase (no sessions needed) */
@@ -418,8 +494,11 @@ export async function genesis(repoRoot: string): Promise<boolean> {
     }
     mkdirSync(join(repoRoot, SESSION_DIR), { recursive: true });
     const header = `_Auto-generated by Ghost (genesis). Last updated: ${new Date().toISOString().slice(0, 10)}_\n\n`;
-    writeFileSync(knowledgePath(repoRoot), `${header + stdout.trim()}\n`);
-    console.log("Initial knowledge base created.");
+    const output = stdout.trim();
+    writeFileSync(knowledgePath(repoRoot), `${header}${output}\n`);
+
+    const entryCount = parseKnowledgeEntries(output).length;
+    console.log(`Initial knowledge base created (${entryCount} entries).`);
     return true;
   } catch (err) {
     console.error(`Genesis failed: ${err instanceof Error ? err.message : String(err)}`);

@@ -108,7 +108,10 @@ ${c.bold}Tagging:${c.reset}
 ${c.bold}Context:${c.reset}
   ${c.cyan}resume${c.reset} [id]          Context handoff from previous session
   ${c.cyan}brief${c.reset} "<desc>"       Generate scoped context brief
-  ${c.cyan}mistake${c.reset} "<desc>"     Add to mistake ledger
+  ${c.cyan}decision${c.reset} "<desc>"    Log a technical decision
+  ${c.cyan}mistake${c.reset} "<desc>"     Log a mistake or gotcha
+  ${c.cyan}strategy${c.reset} "<desc>"    Log a trade-off or approach explored
+  ${c.cyan}knowledge${c.reset} "<desc>"   Log an architectural insight or pattern
 
 ${c.bold}Debugging:${c.reset}
   ${c.cyan}logs${c.reset}                 Show last 20 lines of background log
@@ -132,6 +135,66 @@ ${c.bold}Options:${c.reset}
   --force, -f         Force operation (auto-install deps)
   --genesis           Build initial knowledge base on enable
   --dry-run           Preview changes without writing (absorb)`);
+}
+
+// =============================================================================
+// Entry Builder (for inline CLI commands)
+// =============================================================================
+
+/** Build a structured KnowledgeEntry from CLI description + active session context */
+async function buildEntryFromCLI(root: string, description: string): Promise<import("./session.js").KnowledgeEntry> {
+  const { deriveArea, extractModifiedFiles, getActiveSessionId, getActiveSessionPath, parseFrontmatter } = await import(
+    "./session.js"
+  );
+  const { readFileSync } = await import("node:fs");
+
+  // Parse "Title: description" or "**Title**: description" format
+  let title: string;
+  let desc: string;
+  const boldMatch = description.match(/^\*\*(.+?)\*\*:\s*([\s\S]*)$/);
+  const colonMatch = !boldMatch && description.match(/^([^:]{3,60}):\s+([\s\S]+)$/);
+  if (boldMatch) {
+    title = boldMatch[1]!.trim();
+    desc = boldMatch[2]!.trim();
+  } else if (colonMatch) {
+    title = colonMatch[1]!.trim();
+    desc = colonMatch[2]!.trim();
+  } else {
+    title = description;
+    desc = "";
+  }
+
+  // Get context from active session
+  let sessionId = "manual";
+  let commitSha = "";
+  let files: string[] = [];
+  const activeId = getActiveSessionId(root);
+  if (activeId) {
+    sessionId = activeId;
+    const sessionPath = getActiveSessionPath(root);
+    if (sessionPath) {
+      try {
+        const content = readFileSync(sessionPath, "utf8");
+        const { frontmatter } = parseFrontmatter(content);
+        commitSha = (frontmatter.base_commit as string) || "";
+        files = [...new Set(extractModifiedFiles(content))].slice(0, 10);
+      } catch {
+        // Non-critical
+      }
+    }
+  }
+
+  return {
+    title,
+    description: desc,
+    sessionId,
+    commitSha,
+    files,
+    area: deriveArea(files),
+    date: new Date().toISOString().slice(0, 10),
+    tried: [],
+    rule: "",
+  };
 }
 
 // =============================================================================
@@ -392,24 +455,49 @@ if (import.meta.main) {
       case "knowledge": {
         const root = await repoRoot();
         const subcommand = cli.args[0];
-        const { buildKnowledge, injectKnowledge, showKnowledge, diffKnowledge } = await import("./knowledge.js");
-        switch (subcommand) {
-          case "build":
-            await buildKnowledge(root);
-            break;
-          case "inject":
-            await injectKnowledge(root);
-            break;
-          case "show":
-            showKnowledge(root);
-            break;
-          case "diff":
-            diffKnowledge(root);
-            break;
-          default:
-            console.error("Usage: ghost knowledge <build|inject|show|diff>");
+        const knowledgeSubcmds = ["build", "inject", "show", "diff"];
+        if (subcommand && knowledgeSubcmds.includes(subcommand)) {
+          const { buildKnowledge, injectKnowledge, showKnowledge, diffKnowledge } = await import("./knowledge.js");
+          switch (subcommand) {
+            case "build":
+              await buildKnowledge(root);
+              break;
+            case "inject":
+              await injectKnowledge(root);
+              break;
+            case "show":
+              showKnowledge(root);
+              break;
+            case "diff":
+              diffKnowledge(root);
+              break;
+          }
+        } else {
+          // Inline knowledge entry: ghost knowledge "description"
+          const description = cli.args.join(" ");
+          if (!description) {
+            console.error('Usage: ghost knowledge <build|inject|show|diff> or ghost knowledge "<description>"');
             process.exit(1);
+          }
+          const { appendKnowledge: addKnowledge } = await import("./session.js");
+          const knowledgeEntry = await buildEntryFromCLI(root, description);
+          addKnowledge(root, knowledgeEntry, { dedup: true });
+          console.log("Knowledge logged.");
         }
+        break;
+      }
+
+      case "decision": {
+        const root = await repoRoot();
+        const description = cli.args.join(" ");
+        if (!description) {
+          console.error('Usage: ghost decision "<description>"');
+          process.exit(1);
+        }
+        const { appendDecision: addDecision } = await import("./session.js");
+        const decisionEntry = await buildEntryFromCLI(root, description);
+        addDecision(root, decisionEntry, { dedup: true });
+        console.log("Decision logged.");
         break;
       }
 
@@ -421,8 +509,23 @@ if (import.meta.main) {
           process.exit(1);
         }
         const { appendMistake } = await import("./session.js");
-        appendMistake(root, description);
+        const mistakeEntry = await buildEntryFromCLI(root, description);
+        appendMistake(root, mistakeEntry, { dedup: true });
         console.log("Mistake logged.");
+        break;
+      }
+
+      case "strategy": {
+        const root = await repoRoot();
+        const description = cli.args.join(" ");
+        if (!description) {
+          console.error('Usage: ghost strategy "<description>"');
+          process.exit(1);
+        }
+        const { appendStrategy: addStrategy } = await import("./session.js");
+        const strategyEntry = await buildEntryFromCLI(root, description);
+        addStrategy(root, strategyEntry, { dedup: true });
+        console.log("Strategy logged.");
         break;
       }
 
@@ -491,15 +594,16 @@ if (import.meta.main) {
 
       case "edit": {
         const root = await repoRoot();
-        const { sessionDir, knowledgePath, mistakesPath, decisionsPath } = await import("./paths.js");
+        const { sessionDir, knowledgePath, mistakesPath, decisionsPath, strategiesPath } = await import("./paths.js");
         const target = cli.args[0];
         const paths: Record<string, string> = {
           knowledge: knowledgePath(root),
           mistakes: mistakesPath(root),
           decisions: decisionsPath(root),
+          strategies: strategiesPath(root),
         };
         if (!target || !paths[target]) {
-          console.error("Usage: ghost edit <knowledge|mistakes|decisions>");
+          console.error("Usage: ghost edit <knowledge|mistakes|decisions|strategies>");
           process.exit(1);
         }
         const filePath = paths[target]!;

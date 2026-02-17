@@ -16,7 +16,9 @@ import {
   generateContinuityBlock,
   getCoModifiedFiles,
   getRelevantDecisions,
+  getRelevantKnowledge,
   getRelevantMistakes,
+  getRelevantStrategies,
 } from "./session.js";
 
 // =============================================================================
@@ -77,7 +79,15 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
     // Non-critical — skip silently
   }
 
-  // 4. Inject relevant decisions
+  // 4. Inject relevant strategies
+  try {
+    const strategies = getRelevantStrategies(root, relevantFiles);
+    if (strategies) parts.push(strategies);
+  } catch {
+    // Non-critical — skip silently
+  }
+
+  // 5. Inject relevant decisions
   try {
     const decisions = getRelevantDecisions(root, relevantFiles);
     if (decisions) parts.push(decisions);
@@ -85,7 +95,15 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
     // Non-critical — skip silently
   }
 
-  // 5. Inject co-modified file warnings
+  // 6. Inject relevant knowledge
+  try {
+    const knowledge = getRelevantKnowledge(root, relevantFiles);
+    if (knowledge) parts.push(knowledge);
+  } catch {
+    // Non-critical — skip silently
+  }
+
+  // 7. Inject co-modified file warnings
   try {
     const graph = buildCoModGraph(root);
     const coMod = getCoModifiedFiles(graph, relevantFiles, 10);
@@ -98,7 +116,7 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
     // Non-critical — skip silently
   }
 
-  // 6. Always inject Ghost briefing so Claude understands how to work with Ghost
+  // 8. Always inject Ghost briefing so Claude understands how to work with Ghost
   parts.push(
     `> **Ghost is recording this session.** Prompts, file changes, and decisions are captured automatically.
 > At session end, Ghost extracts decisions, mistakes, and open items from your summary and stores them
@@ -107,6 +125,13 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
 > **Do NOT write project knowledge or documentation into CLAUDE.md.** Ghost manages context injection
 > per-session. Writing to CLAUDE.md bypasses Ghost's relevance scoring and creates stale, bloated context.
 > If asked to document something, put it where it belongs: code comments, README, or dedicated docs.
+>
+> **Persist important knowledge mid-session** — don't wait for session end:
+> - \`ghost decision "Title: reasoning"\` — When the user makes a technical decision
+> - \`ghost mistake "Title: what went wrong"\` — When something fails or the user flags a mistake
+> - \`ghost knowledge "Title: what was learned"\` — When you confirm how something works or learn a pattern
+> - \`ghost strategy "Title: approaches considered"\` — When trade-offs or alternatives are discussed
+> Write entries as they happen so knowledge survives context compaction. Use \`Title: detail\` format.
 >
 > **ALWAYS search Ghost before reading code or grepping.** When a user asks about a feature, bug, scenario,
 > or component — your FIRST action must be searching Ghost, not the codebase. Past sessions contain

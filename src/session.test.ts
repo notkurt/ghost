@@ -8,8 +8,10 @@ import {
   addTags,
   appendDecision,
   appendFileModification,
+  appendKnowledge,
   appendMistake,
   appendPrompt,
+  appendStrategy,
   appendTaskNote,
   buildCoModGraph,
   createSession,
@@ -26,6 +28,7 @@ import {
   getPromptCount,
   getRelevantEntries,
   getSessionPathForHook,
+  isDuplicateEntry,
   listDecisions,
   listTags,
   parseFrontmatter,
@@ -375,6 +378,80 @@ describe("decisions", () => {
     expect(content).toContain("### Use percentage fees with cap");
     expect(content).toContain("session:2026-02-13-abcd1234");
     expect(content).toContain("files:src/cart/fees.ts");
+  });
+});
+
+describe("dedup", () => {
+  const makeEntry = (title: string): KnowledgeEntry => ({
+    title,
+    description: "Some description",
+    sessionId: "2026-02-18-test1234",
+    commitSha: "abc",
+    files: ["src/test.ts"],
+    area: "test",
+    date: "2026-02-18",
+    tried: [],
+    rule: "",
+  });
+
+  test("isDuplicateEntry returns false for empty/missing file", () => {
+    const path = join(tmpDir, SESSION_DIR, "decisions.md");
+    expect(isDuplicateEntry(path, "Some title")).toBe(false);
+  });
+
+  test("isDuplicateEntry returns true for matching title (case-insensitive)", () => {
+    mkdirSync(join(tmpDir, SESSION_DIR), { recursive: true });
+    appendDecision(tmpDir, makeEntry("Use Redis for caching"));
+    const path = join(tmpDir, SESSION_DIR, "decisions.md");
+    expect(isDuplicateEntry(path, "Use Redis for caching")).toBe(true);
+    expect(isDuplicateEntry(path, "use redis for caching")).toBe(true);
+    expect(isDuplicateEntry(path, "USE REDIS FOR CACHING")).toBe(true);
+    expect(isDuplicateEntry(path, "Use Memcached for caching")).toBe(false);
+  });
+
+  test("appendDecision with dedup skips duplicate", () => {
+    mkdirSync(join(tmpDir, SESSION_DIR), { recursive: true });
+    appendDecision(tmpDir, makeEntry("Use Redis"));
+    appendDecision(tmpDir, makeEntry("Use Redis"), { dedup: true });
+    const content = readFileSync(join(tmpDir, SESSION_DIR, "decisions.md"), "utf8");
+    const matches = content.match(/### Use Redis/g);
+    expect(matches?.length).toBe(1);
+  });
+
+  test("appendDecision without dedup allows duplicate", () => {
+    mkdirSync(join(tmpDir, SESSION_DIR), { recursive: true });
+    appendDecision(tmpDir, makeEntry("Use Redis"));
+    appendDecision(tmpDir, makeEntry("Use Redis"));
+    const content = readFileSync(join(tmpDir, SESSION_DIR, "decisions.md"), "utf8");
+    const matches = content.match(/### Use Redis/g);
+    expect(matches?.length).toBe(2);
+  });
+
+  test("appendMistake with dedup skips duplicate", () => {
+    mkdirSync(join(tmpDir, SESSION_DIR), { recursive: true });
+    appendMistake(tmpDir, makeEntry("Off by one"));
+    appendMistake(tmpDir, makeEntry("Off by one"), { dedup: true });
+    const content = readFileSync(join(tmpDir, SESSION_DIR, "mistakes.md"), "utf8");
+    const matches = content.match(/### Off by one/g);
+    expect(matches?.length).toBe(1);
+  });
+
+  test("appendStrategy with dedup skips duplicate", () => {
+    mkdirSync(join(tmpDir, SESSION_DIR), { recursive: true });
+    appendStrategy(tmpDir, makeEntry("Polling vs WebSocket"));
+    appendStrategy(tmpDir, makeEntry("Polling vs WebSocket"), { dedup: true });
+    const content = readFileSync(join(tmpDir, SESSION_DIR, "strategies.md"), "utf8");
+    const matches = content.match(/### Polling vs WebSocket/g);
+    expect(matches?.length).toBe(1);
+  });
+
+  test("appendKnowledge with dedup skips duplicate", () => {
+    mkdirSync(join(tmpDir, SESSION_DIR), { recursive: true });
+    appendKnowledge(tmpDir, makeEntry("Router uses file-based routing"));
+    appendKnowledge(tmpDir, makeEntry("Router uses file-based routing"), { dedup: true });
+    const content = readFileSync(join(tmpDir, SESSION_DIR, "knowledge.md"), "utf8");
+    const matches = content.match(/### Router uses file-based routing/g);
+    expect(matches?.length).toBe(1);
   });
 });
 

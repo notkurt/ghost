@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { extractDecisionEntries, extractMistakeEntries, extractSections } from "./summarize.js";
+import {
+  extractDecisionEntries,
+  extractKnowledgeEntries,
+  extractMistakeEntries,
+  extractSections,
+  extractStrategyEntries,
+  isValidSummary,
+} from "./summarize.js";
 
 describe("extractSections", () => {
   const fullSummary = `## Intent
@@ -92,11 +99,23 @@ quick-fix`;
     expect(sections.mistakes.length).toBe(0);
   });
 
+  test("extracts empty strategies from summary without Strategies section", () => {
+    const sections = extractSections(fullSummary);
+    expect(sections.strategies).toEqual([]);
+  });
+
+  test("extracts empty knowledge from summary without Knowledge section", () => {
+    const sections = extractSections(fullSummary);
+    expect(sections.knowledge).toEqual([]);
+  });
+
   test("handles empty summary", () => {
     const sections = extractSections("");
     expect(sections.tags).toEqual([]);
     expect(sections.decisions).toEqual([]);
     expect(sections.mistakes).toEqual([]);
+    expect(sections.strategies).toEqual([]);
+    expect(sections.knowledge).toEqual([]);
     expect(sections.intent).toBe("");
     expect(sections.openItems).toBe("");
   });
@@ -293,5 +312,131 @@ describe("extractMistakeEntries — junk filtering", () => {
     const entries = extractMistakeEntries(summary);
     expect(entries.length).toBe(1);
     expect(entries[0]!.text).toContain("Wrong boundary condition");
+  });
+});
+
+describe("extractStrategyEntries", () => {
+  test("extracts strategy entries with files", () => {
+    const summary = `## Strategies
+**Update existing vs replace object:** Considered updating the existing handle object in place vs deleting and replacing → chose update in place for referential integrity.
+Files: src/handles/update.ts, src/handles/sync.ts`;
+
+    const entries = extractStrategyEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.text).toContain("Update existing vs replace object");
+    expect(entries[0]!.files).toEqual(["src/handles/update.ts", "src/handles/sync.ts"]);
+  });
+
+  test("extracts multiple strategy entries", () => {
+    const summary = `## Strategies
+**Polling vs WebSocket:** Compared polling every 5s vs WebSocket connection → unresolved
+**Batch vs stream:** Process records in batch vs stream one at a time → chose streaming`;
+
+    const entries = extractStrategyEntries(summary);
+    expect(entries.length).toBe(2);
+    expect(entries[0]!.text).toContain("Polling vs WebSocket");
+    expect(entries[1]!.text).toContain("Batch vs stream");
+  });
+
+  test("filters None variations", () => {
+    expect(extractStrategyEntries("## Strategies\nNone")).toEqual([]);
+    expect(extractStrategyEntries("## Strategies\nN/A")).toEqual([]);
+    expect(extractStrategyEntries("## Strategies\nNo strategies")).toEqual([]);
+    expect(extractStrategyEntries("## Strategies\nNot applicable")).toEqual([]);
+    expect(extractStrategyEntries("## Strategies\nNothing")).toEqual([]);
+  });
+
+  test("returns empty for missing section", () => {
+    expect(extractStrategyEntries("## Intent\nSomething")).toEqual([]);
+  });
+
+  test("handles entries without Files line", () => {
+    const summary = `## Strategies
+**Cache invalidation approach:** TTL vs event-driven → unresolved`;
+
+    const entries = extractStrategyEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.files).toEqual([]);
+  });
+});
+
+describe("extractKnowledgeEntries", () => {
+  test("extracts knowledge entries with files", () => {
+    const summary = `## Knowledge
+**Cart fee system uses percentage with cap:** The fee calculation applies a percentage to the subtotal with a hard $50 cap.
+Files: src/cart/fees.ts`;
+
+    const entries = extractKnowledgeEntries(summary);
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.text).toContain("Cart fee system uses percentage with cap");
+    expect(entries[0]!.files).toEqual(["src/cart/fees.ts"]);
+  });
+
+  test("extracts multiple knowledge entries", () => {
+    const summary = `## Knowledge
+**Router uses file-based routing:** Pages in app/routes/ map directly to URL paths.
+Files: app/routes/
+**Auth middleware checks JWT:** All API routes pass through auth middleware first.
+Files: src/middleware/auth.ts`;
+
+    const entries = extractKnowledgeEntries(summary);
+    expect(entries.length).toBe(2);
+  });
+
+  test("filters None variations", () => {
+    expect(extractKnowledgeEntries("## Knowledge\nNone")).toEqual([]);
+    expect(extractKnowledgeEntries("## Knowledge\nN/A")).toEqual([]);
+    expect(extractKnowledgeEntries("## Knowledge\nNo knowledge")).toEqual([]);
+    expect(extractKnowledgeEntries("## Knowledge\nNot applicable")).toEqual([]);
+    expect(extractKnowledgeEntries("## Knowledge\nNothing")).toEqual([]);
+  });
+
+  test("returns empty for missing section", () => {
+    expect(extractKnowledgeEntries("## Intent\nSomething")).toEqual([]);
+  });
+});
+
+describe("isValidSummary", () => {
+  test("returns true for properly structured summary", () => {
+    const summary = `## Intent
+Something.
+
+## Changes
+- file.ts
+
+## Tags
+test`;
+
+    expect(isValidSummary(summary)).toBe(true);
+  });
+
+  test("returns false for conversational response", () => {
+    expect(isValidSummary("Sure! Here's a summary of what happened in this session...")).toBe(false);
+  });
+
+  test("returns false for summary missing Tags", () => {
+    const summary = `## Intent
+Something.
+
+## Changes
+- file.ts`;
+
+    expect(isValidSummary(summary)).toBe(false);
+  });
+
+  test("returns false for empty string", () => {
+    expect(isValidSummary("")).toBe(false);
+  });
+
+  test("returns true when Intent is not the first section but exists", () => {
+    const summary = `Some preamble text
+
+## Intent
+Something.
+
+## Tags
+test`;
+
+    expect(isValidSummary(summary)).toBe(true);
   });
 });

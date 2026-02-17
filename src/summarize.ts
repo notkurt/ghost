@@ -5,7 +5,9 @@ import { checkClaude } from "./deps.js";
 // AI Summarization
 // =============================================================================
 
-const SUMMARY_PROMPT = `Summarize this AI coding session. Return markdown with these sections:
+const SUMMARY_PROMPT = `You MUST return ONLY the structured markdown sections below. Do NOT write conversational text. Every response must start with \`## Intent\`.
+
+Summarize this AI coding session. Return markdown with these sections:
 
 ## Intent
 What was the developer trying to accomplish (1-2 sentences)
@@ -13,9 +15,18 @@ What was the developer trying to accomplish (1-2 sentences)
 ## Changes
 Files modified and why (bullet list). Use repo-relative paths (not absolute).
 
+## Knowledge
+Architectural insights, patterns, conventions, or system understanding gained in this session.
+Only include knowledge that would help a future developer working in the same area.
+If none, write "None" on its own line.
+Format: **{topic}**: {what was learned or documented}
+Files: {comma-separated repo-relative file paths}
+The Files: line is optional.
+
 ## Decisions
 Key technical decisions made and reasoning. Only include decisions where there was a
-genuine choice between alternatives — architecture, algorithm, API design, data model.
+genuine choice between alternatives — architecture, algorithm, API design, data model,
+update strategies, object lifecycle management, sync approaches.
 Do NOT include: where documentation was placed, file naming, routine implementation choices,
 or anything that followed an obvious existing pattern.
 If no significant decisions were made, write "None" on its own line.
@@ -25,6 +36,17 @@ Files: {comma-separated repo-relative file paths where this applies}
 Rule: {if applicable, an assertion-style constraint: WHEN {context} NEVER/ALWAYS {action}}
 
 The Files: and Rule: lines are optional — omit if not applicable.
+
+Pay special attention to user questions phrased as "should we...", "what if we...", "would it be better to..." — these indicate important architectural thinking that MUST appear in either Decisions (if resolved) or Strategies (if open).
+
+## Strategies
+Trade-offs, approaches, and design alternatives explored or discussed in this session,
+whether or not a final decision was reached. Include alternative approaches compared,
+questions about how to approach a problem, and design trade-offs weighed.
+If none, write "None" on its own line.
+Format: **{problem/question}**: {approaches considered} → {outcome or "unresolved"}
+Files: {comma-separated repo-relative file paths}
+The Files: line is optional.
 
 ## Mistakes
 Anything that went wrong, was reverted, or required multiple attempts.
@@ -92,6 +114,8 @@ export interface ExtractedSections {
   tags: string[];
   decisions: ExtractedEntry[];
   mistakes: ExtractedEntry[];
+  strategies: ExtractedEntry[];
+  knowledge: ExtractedEntry[];
   intent: string;
   changes: string;
   openItems: string;
@@ -104,6 +128,8 @@ export function extractSections(summary: string): ExtractedSections {
     tags: extractTags(summary),
     decisions: extractDecisionEntries(summary),
     mistakes: extractMistakeEntries(summary),
+    strategies: extractStrategyEntries(summary),
+    knowledge: extractKnowledgeEntries(summary),
     intent: extractNamedSection(summary, "Intent"),
     changes: extractNamedSection(summary, "Changes"),
     openItems: extractNamedSection(summary, "Open Items"),
@@ -190,6 +216,29 @@ export function extractMistakeEntries(summary: string): ExtractedEntry[] {
   if (!section || nonePatterns.test(stripMarkdown(section.trim()))) return [];
   const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
   return blocks.map((b) => parseEntryBlock(b.trim()));
+}
+
+/** Extract individual strategy entries */
+export function extractStrategyEntries(summary: string): ExtractedEntry[] {
+  const section = extractNamedSection(summary, "Strategies");
+  const nonePatterns = /^(none|n\/a|no strategies|no trade-offs|nothing|not applicable)/i;
+  if (!section || nonePatterns.test(stripMarkdown(section.trim()))) return [];
+  const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
+  return blocks.map((b) => parseEntryBlock(b.trim()));
+}
+
+/** Extract individual knowledge entries */
+export function extractKnowledgeEntries(summary: string): ExtractedEntry[] {
+  const section = extractNamedSection(summary, "Knowledge");
+  const nonePatterns = /^(none|n\/a|no knowledge|no insights|nothing|not applicable)/i;
+  if (!section || nonePatterns.test(stripMarkdown(section.trim()))) return [];
+  const blocks = section.split(/\n(?=\*\*)/).filter((e) => e.trim());
+  return blocks.map((b) => parseEntryBlock(b.trim()));
+}
+
+/** Check if a summary has valid structured format (starts with ## Intent and has ## Tags) */
+export function isValidSummary(summary: string): boolean {
+  return /^##\s+Intent/m.test(summary) && /^##\s+Tags/m.test(summary);
 }
 
 /** Extract a named section from markdown */

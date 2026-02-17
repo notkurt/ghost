@@ -13,6 +13,7 @@ export const TAGS_FILE = "tags.json";
 export const KNOWLEDGE_FILE = "knowledge.md";
 export const MISTAKES_FILE = "mistakes.md";
 export const DECISIONS_FILE = "decisions.md";
+export const STRATEGIES_FILE = "strategies.md";
 
 // =============================================================================
 // Path Helpers
@@ -66,6 +67,11 @@ export function mistakesPath(repoRoot: string): string {
 /** Path to the decision log */
 export function decisionsPath(repoRoot: string): string {
   return join(repoRoot, SESSION_DIR, DECISIONS_FILE);
+}
+
+/** Path to the strategies log */
+export function strategiesPath(repoRoot: string): string {
+  return join(repoRoot, SESSION_DIR, STRATEGIES_FILE);
 }
 
 /** Path to the session map (Claude session_id → Ghost session_id) */

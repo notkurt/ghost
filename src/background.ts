@@ -15,14 +15,16 @@ import {
   addFrontmatterField,
   addTags,
   appendDecision,
+  appendKnowledge,
   appendMistake,
+  appendStrategy,
   checkpoint,
   deriveArea,
   detectCorrections,
   extractModifiedFiles,
   parseFrontmatter,
 } from "./session.js";
-import { extractSections, summarize } from "./summarize.js";
+import { extractSections, isValidSummary, summarize } from "./summarize.js";
 
 const [repoRoot, sessionPath, sessionId] = process.argv.slice(2) as [string, string, string];
 
@@ -92,7 +94,16 @@ try {
     log("Summarization complete, appending to session file");
     appendFileSync(sessionPath, `\n## Summary\n\n${summary}\n`);
 
-    // 2. Extract tags, decisions, mistakes
+    // Validate summary format
+    const validFormat = isValidSummary(summary);
+    if (!validFormat) {
+      log("Summary has unstructured format — marking in frontmatter, skipping knowledge extraction");
+      const currentContent = readFileSync(sessionPath, "utf8");
+      const updated = addFrontmatterField(currentContent, "summary_format", "unstructured");
+      writeFileSync(sessionPath, updated);
+    }
+
+    // 2. Extract tags, decisions, mistakes, strategies, knowledge
     const sections = extractSections(summary);
 
     // Check if AI flagged this session as not relevant for knowledge
@@ -109,7 +120,7 @@ try {
       log(`Tagged: ${sections.tags.join(", ")}`);
     }
 
-    if (!sections.skipKnowledge) {
+    if (!sections.skipKnowledge && validFormat) {
       // Read session data for context
       const sessionContent = readFileSync(sessionPath, "utf8");
       const { frontmatter } = parseFrontmatter(sessionContent);
@@ -121,37 +132,93 @@ try {
         const { title, description } = parseTitleDescription(decision.text);
         if (isJunkEntry(title)) continue;
         const files = decision.files.length > 0 ? decision.files : modifiedFiles.slice(0, 5);
-        appendDecision(repoRoot, {
-          title,
-          description,
-          sessionId,
-          commitSha,
-          files,
-          area: deriveArea(files),
-          date: sessionDate,
-          tried: decision.tried,
-          rule: decision.rule,
-        });
+        appendDecision(
+          repoRoot,
+          {
+            title,
+            description,
+            sessionId,
+            commitSha,
+            files,
+            area: deriveArea(files),
+            date: sessionDate,
+            tried: decision.tried,
+            rule: decision.rule,
+          },
+          { dedup: true },
+        );
       }
       if (sections.decisions.length > 0) {
         log(`Logged ${sections.decisions.length} decision(s)`);
+      }
+
+      for (const strategy of sections.strategies) {
+        const { title, description } = parseTitleDescription(strategy.text);
+        if (isJunkEntry(title)) continue;
+        const files = strategy.files.length > 0 ? strategy.files : modifiedFiles.slice(0, 5);
+        appendStrategy(
+          repoRoot,
+          {
+            title,
+            description,
+            sessionId,
+            commitSha,
+            files,
+            area: deriveArea(files),
+            date: sessionDate,
+            tried: strategy.tried,
+            rule: strategy.rule,
+          },
+          { dedup: true },
+        );
+      }
+      if (sections.strategies.length > 0) {
+        log(`Logged ${sections.strategies.length} strategy(ies)`);
+      }
+
+      for (const knowledge of sections.knowledge) {
+        const { title, description } = parseTitleDescription(knowledge.text);
+        if (isJunkEntry(title)) continue;
+        const files = knowledge.files.length > 0 ? knowledge.files : modifiedFiles.slice(0, 5);
+        appendKnowledge(
+          repoRoot,
+          {
+            title,
+            description,
+            sessionId,
+            commitSha,
+            files,
+            area: deriveArea(files),
+            date: sessionDate,
+            tried: knowledge.tried,
+            rule: knowledge.rule,
+          },
+          { dedup: true },
+        );
+      }
+      if (sections.knowledge.length > 0) {
+        log(`Logged ${sections.knowledge.length} knowledge entry(ies)`);
       }
 
       for (const mistake of sections.mistakes) {
         const { title, description } = parseTitleDescription(mistake.text);
         if (isJunkEntry(title)) continue;
         const files = mistake.files.length > 0 ? mistake.files : modifiedFiles.slice(0, 5);
-        appendMistake(repoRoot, {
-          title,
-          description,
-          sessionId,
-          commitSha,
-          files,
-          area: deriveArea(files),
-          date: sessionDate,
-          tried: mistake.tried,
-          rule: mistake.rule,
-        });
+        appendMistake(
+          repoRoot,
+          {
+            title,
+            description,
+            sessionId,
+            commitSha,
+            files,
+            area: deriveArea(files),
+            date: sessionDate,
+            tried: mistake.tried,
+            rule: mistake.rule,
+          },
+          { dedup: true },
+        );
       }
       if (sections.mistakes.length > 0) {
         log(`Logged ${sections.mistakes.length} mistake(s)`);
@@ -166,17 +233,21 @@ try {
         }
         for (const [file, count] of Object.entries(fileCounts)) {
           if (count >= 2) {
-            appendMistake(repoRoot, {
-              title: `Repeated modifications to ${file}`,
-              description: `File was modified across multiple consecutive turns — may indicate the AI struggled with this file. Review session ${sessionId} for the correct approach.`,
-              sessionId,
-              commitSha,
-              files: [file],
-              area: deriveArea([file]),
-              date: sessionDate,
-              tried: [],
-              rule: "",
-            });
+            appendMistake(
+              repoRoot,
+              {
+                title: `Repeated modifications to ${file}`,
+                description: `File was modified across multiple consecutive turns — may indicate the AI struggled with this file. Review session ${sessionId} for the correct approach.`,
+                sessionId,
+                commitSha,
+                files: [file],
+                area: deriveArea([file]),
+                date: sessionDate,
+                tried: [],
+                rule: "",
+              },
+              { dedup: true },
+            );
             log(`Auto-detected correction pattern for ${file}`);
           }
         }
