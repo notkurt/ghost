@@ -9,6 +9,7 @@ import {
   appendTaskNote,
   appendTurnDelimiter,
   buildCoModGraph,
+  cleanupOrphanedSessions,
   createSession,
   extractModifiedFiles,
   finalizeSession,
@@ -32,6 +33,13 @@ import {
 export async function handleSessionStart(input: SessionStartInput): Promise<string | undefined> {
   const root = input.cwd || (await repoRoot());
   const _id = await createSession(root, input.session_id);
+
+  // Clean up orphaned sessions from previous runs that never got a session-end
+  try {
+    cleanupOrphanedSessions(root);
+  } catch {
+    // Non-critical — never block session start
+  }
 
   const parts: string[] = [];
 

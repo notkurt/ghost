@@ -8,6 +8,7 @@ import {
   readFileSync,
   renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -319,6 +320,94 @@ export function finalizeSession(repoRoot: string, claudeSessionId?: string): { p
   }
 
   return { path: compPath, ghostId: id };
+}
+
+// =============================================================================
+// Orphaned Session Cleanup
+// =============================================================================
+
+const DEFAULT_ORPHAN_AGE_MS = 4 * 60 * 60 * 1000; // 4 hours
+
+/** Clean up orphaned active sessions that were never finalized.
+ *  Sessions are considered orphaned if their mtime is older than maxAgeMs
+ *  AND they are not referenced by current-id or session-map.json.
+ *  Moves them to completed/ with orphaned: true in frontmatter.
+ *  Returns list of cleaned session IDs. */
+export function cleanupOrphanedSessions(repoRoot: string, opts?: { maxAgeMs?: number; dryRun?: boolean }): string[] {
+  const maxAge = opts?.maxAgeMs ?? DEFAULT_ORPHAN_AGE_MS;
+  const dryRun = opts?.dryRun ?? false;
+  const actDir = activeDir(repoRoot);
+  if (!existsSync(actDir)) return [];
+
+  // Build set of session IDs that are actively in use
+  const liveIds = new Set<string>();
+
+  // current-id points to the session owned by the current Claude process
+  const idPath = currentIdPath(repoRoot);
+  if (existsSync(idPath)) {
+    const currentId = readFileSync(idPath, "utf8").trim();
+    if (currentId) liveIds.add(currentId);
+  }
+
+  // session-map.json tracks all concurrent Claude sessions
+  const map = readSessionMap(repoRoot);
+  for (const ghostId of Object.values(map)) {
+    liveIds.add(ghostId);
+  }
+
+  const now = Date.now();
+  const cleaned: string[] = [];
+
+  const files = readdirSync(actDir).filter((f) => f.endsWith(".md"));
+  for (const file of files) {
+    const sessionId = file.replace(".md", "");
+    if (liveIds.has(sessionId)) continue;
+
+    const filePath = join(actDir, file);
+    const mtime = statSync(filePath).mtimeMs;
+    if (now - mtime < maxAge) continue;
+
+    // This session is orphaned
+    if (dryRun) {
+      cleaned.push(sessionId);
+      continue;
+    }
+
+    try {
+      const content = readFileSync(filePath, "utf8");
+      const redacted = redactWithBuiltinPatterns(content);
+      let updated = addFrontmatterField(redacted, "ended", new Date(mtime).toISOString());
+      updated = addFrontmatterField(updated, "orphaned", true);
+
+      const compDir = completedDir(repoRoot);
+      mkdirSync(compDir, { recursive: true });
+      const compPath = completedSessionPath(repoRoot, sessionId);
+      writeFileSync(compPath, updated);
+      unlinkSync(filePath);
+      cleaned.push(sessionId);
+    } catch {
+      // Skip files that fail — don't block on cleanup errors
+    }
+  }
+
+  // Clean stale entries from session-map.json (pointing to sessions that no longer exist in active/)
+  if (!dryRun) {
+    try {
+      const currentMap = readSessionMap(repoRoot);
+      let changed = false;
+      for (const [claudeId, ghostId] of Object.entries(currentMap)) {
+        if (!existsSync(sessionFilePath(repoRoot, ghostId))) {
+          delete currentMap[claudeId];
+          changed = true;
+        }
+      }
+      if (changed) writeSessionMap(repoRoot, currentMap);
+    } catch {
+      // Non-critical
+    }
+  }
+
+  return cleaned;
 }
 
 // =============================================================================

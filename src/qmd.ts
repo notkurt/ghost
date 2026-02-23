@@ -88,7 +88,11 @@ export async function createCollection(root: string): Promise<boolean> {
     await $`qmd collection add ${dir} --name ${name}`.quiet();
     await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
     return true;
-  } catch {
+  } catch (err) {
+    // If collection already exists (collectionExists may have failed to detect it),
+    // treat as success. Bun ShellError puts the actual message in stderr.
+    const msg = `${err instanceof Error ? err.message : String(err)} ${(err as { stderr?: { toString(): string } })?.stderr?.toString() ?? ""}`;
+    if (msg.includes("already exists")) return true;
     return false;
   }
 }

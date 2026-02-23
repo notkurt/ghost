@@ -117,6 +117,10 @@ ${c.bold}Debugging:${c.reset}
   ${c.cyan}logs${c.reset}                 Show last 20 lines of background log
   ${c.cyan}logs --all${c.reset}           Show full background log
 
+${c.bold}Maintenance:${c.reset}
+  ${c.cyan}cleanup${c.reset}              Move orphaned active sessions to completed
+  ${c.cyan}cleanup --dry-run${c.reset}    Preview what would be cleaned up
+
 ${c.bold}Analytics:${c.reset}
   ${c.cyan}heatmap${c.reset}              File modification frequency
   ${c.cyan}stats${c.reset}                Session metrics and trends
@@ -637,6 +641,29 @@ if (import.meta.main) {
         const built = await genesis(root);
         if (built) {
           await injectKnowledge(root);
+        }
+        break;
+      }
+
+      case "cleanup": {
+        const root = await repoRoot();
+        const { cleanupOrphanedSessions } = await import("./session.js");
+        const dryRun = !!cli.values["dry-run"];
+        // Use 0 maxAge for manual cleanup — clean everything not actively in use
+        const cleaned = cleanupOrphanedSessions(root, { maxAgeMs: 0, dryRun });
+        if (cleaned.length === 0) {
+          console.log("No orphaned sessions found.");
+        } else if (dryRun) {
+          console.log(`Would clean up ${cleaned.length} orphaned session(s):`);
+          for (const id of cleaned) {
+            console.log(`  ${c.dim}${id}${c.reset}`);
+          }
+          console.log(`\nRun ${c.bold}ghost cleanup${c.reset} without --dry-run to proceed.`);
+        } else {
+          console.log(`Cleaned up ${c.green}${cleaned.length}${c.reset} orphaned session(s):`);
+          for (const id of cleaned) {
+            console.log(`  ${c.dim}${id}${c.reset}`);
+          }
         }
         break;
       }

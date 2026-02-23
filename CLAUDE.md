@@ -25,6 +25,8 @@ ghost resume [id]         # Context handoff from previous session
 ghost brief "desc"        # Scoped context brief
 ghost heatmap             # File modification frequency
 ghost stats               # Session metrics
+ghost cleanup              # Move orphaned active sessions to completed
+ghost cleanup --dry-run   # Preview orphaned sessions without moving
 ghost validate            # Check session files for formatting errors
 ghost validate -f         # Auto-fix fixable formatting issues
 ghost reindex             # Rebuild QMD collection
