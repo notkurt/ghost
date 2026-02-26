@@ -54,13 +54,30 @@ export async function indexSession(root: string): Promise<{ ok: boolean; reason?
         // ignore global update failures
       }
     } else {
-      await $`qmd collection add ${dir} --name ${name}`.quiet();
-      await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
+      // collectionExists may return false even when the collection exists
+      // (e.g. qmd list fails in background subprocess context). Handle gracefully.
+      try {
+        await $`qmd collection add ${dir} --name ${name}`.quiet();
+        await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
+      } catch (addErr) {
+        const stderr = (addErr as { stderr?: { toString(): string } })?.stderr?.toString() ?? "";
+        if (!stderr.includes("already exists")) {
+          return {
+            ok: false,
+            reason: `collection add failed: ${stderr.trim() || (addErr instanceof Error ? addErr.message : String(addErr))}`,
+          };
+        }
+        // Collection already exists despite collectionExists returning false — continue to embed
+      }
     }
     await $`qmd embed`.quiet();
     return { ok: true };
   } catch (err) {
-    return { ok: false, reason: `command failed: ${err instanceof Error ? err.message : String(err)}` };
+    const stderr = (err as { stderr?: { toString(): string } })?.stderr?.toString() ?? "";
+    return {
+      ok: false,
+      reason: `command failed: ${stderr.trim() || (err instanceof Error ? err.message : String(err))}`,
+    };
   }
 }
 

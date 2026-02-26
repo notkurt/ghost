@@ -16,7 +16,8 @@ export interface DepStatus {
 const home = homedir();
 const extraPaths = [`${home}/.bun/bin`, "/opt/homebrew/bin", "/usr/local/bin", `${home}/.local/bin`];
 const currentPath = process.env.PATH || "";
-const missing = extraPaths.filter((p) => !currentPath.split(":").includes(p));
+const currentEntries = currentPath.split(":").map((p) => p.replace(/\/+$/, ""));
+const missing = extraPaths.filter((p) => !currentEntries.includes(p));
 if (missing.length > 0) {
   process.env.PATH = [...missing, currentPath].join(":");
 }
