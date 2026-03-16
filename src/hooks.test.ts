@@ -11,6 +11,7 @@ import {
   handleStop,
 } from "./hooks.js";
 import { ACTIVE_DIR, COMPLETED_DIR, SESSION_DIR } from "./paths.js";
+import { collectionName } from "./qmd.js";
 import { getActiveSessionId, getSessionPathForHook, parseFrontmatter, readSessionMap } from "./session.js";
 
 let tmpDir: string;
@@ -262,5 +263,74 @@ describe("concurrent sessions via hooks", () => {
     // Session map should be empty
     const finalMap = readSessionMap(tmpDir);
     expect(Object.keys(finalMap).length).toBe(0);
+  });
+});
+
+describe("worktree support", () => {
+  let mainDir: string;
+  let wtDir: string;
+
+  beforeEach(async () => {
+    mainDir = join(import.meta.dir, `../.test-tmp-main-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    wtDir = join(import.meta.dir, `../.test-tmp-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(mainDir, { recursive: true });
+    await $`git init ${mainDir}`.quiet();
+    await $`git -C ${mainDir} commit --allow-empty -m "init"`.quiet();
+    await $`git -C ${mainDir} worktree add ${wtDir} -b test-wt`.quiet();
+  });
+
+  afterEach(async () => {
+    await $`git -C ${mainDir} worktree remove ${wtDir} --force`.quiet().nothrow();
+    if (existsSync(wtDir)) rmSync(wtDir, { recursive: true, force: true });
+    if (existsSync(mainDir)) rmSync(mainDir, { recursive: true, force: true });
+  });
+
+  test("session created from worktree is stored in main repo", async () => {
+    await handleSessionStart({ session_id: "wt-test", cwd: wtDir });
+
+    // Session should be in mainDir, not wtDir
+    const id = getActiveSessionId(mainDir);
+    expect(id).not.toBeNull();
+    expect(existsSync(join(mainDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`))).toBe(true);
+    expect(existsSync(join(wtDir, SESSION_DIR))).toBe(false);
+  });
+
+  test("session end from worktree moves to main repo completed dir", async () => {
+    await handleSessionStart({ session_id: "wt-test", cwd: wtDir });
+    const id = getActiveSessionId(mainDir)!;
+
+    await handleSessionEnd({ session_id: "wt-test", cwd: wtDir });
+
+    expect(existsSync(join(mainDir, SESSION_DIR, COMPLETED_DIR, `${id}.md`))).toBe(true);
+    expect(existsSync(join(wtDir, SESSION_DIR))).toBe(false);
+  });
+
+  test("prompts from worktree append to session in main repo", async () => {
+    await handleSessionStart({ session_id: "wt-test", cwd: wtDir });
+    await handlePrompt({ session_id: "wt-test", cwd: wtDir, prompt: "Fix from worktree" });
+
+    const id = getActiveSessionId(mainDir)!;
+    const content = readFileSync(join(mainDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`), "utf8");
+    expect(content).toContain("Fix from worktree");
+  });
+
+  test("file writes from worktree append to session in main repo", async () => {
+    await handleSessionStart({ session_id: "wt-test", cwd: wtDir });
+    await handlePostWrite({
+      session_id: "wt-test",
+      cwd: wtDir,
+      tool_name: "Write",
+      tool_input: { file_path: "src/worktree-file.ts" },
+    });
+
+    const id = getActiveSessionId(mainDir)!;
+    const content = readFileSync(join(mainDir, SESSION_DIR, ACTIVE_DIR, `${id}.md`), "utf8");
+    expect(content).toContain("- Modified: src/worktree-file.ts");
+  });
+
+  test("collectionName is the same from main repo and worktree", async () => {
+    const nameFromMain = await collectionName(mainDir);
+    const nameFromWt = await collectionName(wtDir);
+    expect(nameFromMain).toBe(nameFromWt);
   });
 });

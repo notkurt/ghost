@@ -187,3 +187,66 @@ describe("disable", () => {
     await disable(tmpDir);
   });
 });
+
+describe("worktree support", () => {
+  let mainDir: string;
+  let wtDir: string;
+
+  beforeEach(async () => {
+    mainDir = join(import.meta.dir, `../.test-tmp-main-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    wtDir = join(import.meta.dir, `../.test-tmp-wt-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(mainDir, { recursive: true });
+    await $`git init ${mainDir}`.quiet();
+    await $`git -C ${mainDir} commit --allow-empty -m "init"`.quiet();
+    await $`git -C ${mainDir} worktree add ${wtDir} -b test-wt`.quiet();
+    resetQmdCache();
+    resetDepCache();
+  });
+
+  afterEach(async () => {
+    // Clean up QMD collections
+    try {
+      const name = await collectionName(mainDir);
+      await removeCollection(name);
+    } catch {
+      // ignore
+    }
+    await $`git -C ${mainDir} worktree remove ${wtDir} --force`.quiet().nothrow();
+    if (existsSync(wtDir)) rmSync(wtDir, { recursive: true, force: true });
+    if (existsSync(mainDir)) rmSync(mainDir, { recursive: true, force: true });
+  });
+
+  test("enable from worktree stores sessions in main repo", async () => {
+    await enable(wtDir);
+
+    // Config files should be in wtDir (worktree-local)
+    expect(existsSync(join(wtDir, ".claude", "settings.json"))).toBe(true);
+
+    // Session dirs should be in mainDir (main repo root)
+    expect(existsSync(join(mainDir, SESSION_DIR, ACTIVE_DIR))).toBe(true);
+    expect(existsSync(join(mainDir, SESSION_DIR, COMPLETED_DIR))).toBe(true);
+
+    // Session dirs should NOT be in wtDir
+    expect(existsSync(join(wtDir, SESSION_DIR))).toBe(false);
+  });
+
+  test("collectionName is the same from main repo and worktree", async () => {
+    const nameFromMain = await collectionName(mainDir);
+    const nameFromWt = await collectionName(wtDir);
+    expect(nameFromMain).toBe(nameFromWt);
+  });
+
+  test("git hooks installed in main repo, not worktree", async () => {
+    await enable(wtDir);
+    const mainHookPath = join(mainDir, ".git", "hooks", "post-commit");
+    expect(existsSync(mainHookPath)).toBe(true);
+    const hookContent = readFileSync(mainHookPath, "utf8");
+    expect(hookContent).toContain("ghost checkpoint &");
+  });
+
+  test("gitignore added to main repo root", async () => {
+    await enable(wtDir);
+    const gitignore = readFileSync(join(mainDir, ".gitignore"), "utf8");
+    expect(gitignore).toContain(".ai-sessions/");
+  });
+});
