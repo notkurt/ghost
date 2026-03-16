@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import type { PostToolUseInput, SessionEndInput, SessionStartInput, StopInput, UserPromptInput } from "./env.js";
-import { repoRoot } from "./git.js";
+import { mainRepoRoot } from "./git.js";
 import { completedSessionPath } from "./paths.js";
 import {
   appendFileModification,
@@ -31,7 +31,8 @@ import {
  * Returns context string via stdout (Claude sees this).
  */
 export async function handleSessionStart(input: SessionStartInput): Promise<string | undefined> {
-  const root = input.cwd || (await repoRoot());
+  const root = await mainRepoRoot(input.cwd);
+  const cwd = input.cwd || root; // worktree cwd for git diff
   const _id = await createSession(root, input.session_id);
 
   // Clean up orphaned sessions from previous runs that never got a session-end
@@ -57,8 +58,8 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
   // 2. Gather relevant files from git state + previous session
   let relevantFiles: string[] = [];
   try {
-    const unstaged = execSync("git diff --name-only HEAD", { cwd: root, encoding: "utf8", timeout: 3000 }).trim();
-    const staged = execSync("git diff --name-only --cached", { cwd: root, encoding: "utf8", timeout: 3000 }).trim();
+    const unstaged = execSync("git diff --name-only HEAD", { cwd, encoding: "utf8", timeout: 3000 }).trim();
+    const staged = execSync("git diff --name-only --cached", { cwd, encoding: "utf8", timeout: 3000 }).trim();
     relevantFiles = [...new Set([...unstaged.split("\n").filter(Boolean), ...staged.split("\n").filter(Boolean)])];
   } catch {
     // No git changes or not in a git repo
@@ -160,7 +161,7 @@ export async function handleSessionStart(input: SessionStartInput): Promise<stri
  * UserPromptSubmit: Append user prompt to active session.
  */
 export async function handlePrompt(input: UserPromptInput): Promise<void> {
-  const root = input.cwd || (await repoRoot());
+  const root = await mainRepoRoot(input.cwd);
   const prompt = input.prompt || "";
   if (prompt) {
     appendPrompt(root, input.session_id, prompt);
@@ -171,7 +172,7 @@ export async function handlePrompt(input: UserPromptInput): Promise<void> {
  * PostToolUse(Write|Edit): Record file modification.
  */
 export async function handlePostWrite(input: PostToolUseInput): Promise<void> {
-  const root = input.cwd || (await repoRoot());
+  const root = await mainRepoRoot(input.cwd);
   const filePath = input.tool_input?.file_path as string | undefined;
   if (filePath) {
     appendFileModification(root, input.session_id, filePath);
@@ -182,7 +183,7 @@ export async function handlePostWrite(input: PostToolUseInput): Promise<void> {
  * PostToolUse(Task): Record task completion.
  */
 export async function handlePostTask(input: PostToolUseInput): Promise<void> {
-  const root = input.cwd || (await repoRoot());
+  const root = await mainRepoRoot(input.cwd);
   const description = (input.tool_input?.description as string) || "subtask completed";
   appendTaskNote(root, input.session_id, description);
 }
@@ -191,7 +192,7 @@ export async function handlePostTask(input: PostToolUseInput): Promise<void> {
  * Stop: Append turn delimiter with timestamp and diff stat.
  */
 export async function handleStop(input: StopInput): Promise<void> {
-  const root = input.cwd || (await repoRoot());
+  const root = await mainRepoRoot(input.cwd);
   await appendTurnDelimiter(root, input.session_id);
 }
 
@@ -200,7 +201,7 @@ export async function handleStop(input: StopInput): Promise<void> {
  * Exits immediately — background process handles summarization, git notes, QMD indexing.
  */
 export async function handleSessionEnd(input: SessionEndInput): Promise<void> {
-  const root = input.cwd || (await repoRoot());
+  const root = await mainRepoRoot(input.cwd);
 
   const result = finalizeSession(root, input.session_id);
   if (!result) return;

@@ -58,6 +58,7 @@ Always run `bun run check` before committing to ensure typecheck, lint, and test
 - Claude Code hooks for non-blocking capture (<50ms per hook)
 - AI summarization via `claude -p` on session end (background process)
 - Shared knowledge via `ghost/knowledge` orphan branch (no worktree impact)
+- Worktree-aware: `mainRepoRoot()` resolves to the main repo via `--git-common-dir`, so sessions/QMD/hooks are always in the main repo root
 
 ## Important
 

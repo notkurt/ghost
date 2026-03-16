@@ -291,6 +291,42 @@ git push origin refs/notes/ai-sessions
 
 When QMD is installed, Ghost configures an MCP server so Claude Code can search past sessions directly during a conversation. The agent can ask things like "what did we decide about fee calculation?" and get answers from its own history.
 
+## Git Worktrees
+
+Ghost is fully worktree-aware. When running inside a git worktree, all session data (`.ai-sessions/`), QMD collections, git hooks, and knowledge files are stored in the main repository root — not the worktree directory. This means:
+
+- Sessions are never lost when a worktree is cleaned up
+- The QMD collection name (`ghost-<repo-name>`) is stable across all worktrees
+- MCP search always queries the correct, shared collection
+- `ghost enable` from a worktree places config files (`.claude/settings.json`, `.mcp.json`) in the worktree but stores everything else in the main repo
+
+Ghost resolves the main repo root automatically via `git rev-parse --git-common-dir`.
+
+### Getting hooks into worktrees
+
+Ghost's hooks are registered in `.claude/settings.json` and the MCP server in `.mcp.json`. These are local config files — new worktrees won't have them unless you take one of these approaches:
+
+**Option A: Commit the config files** (recommended for seamless worktree support)
+
+```bash
+git add .claude/settings.json .mcp.json
+git commit -m "Add Ghost hook and MCP config"
+```
+
+Since worktrees share the same git history, any new worktree will have the hooks and MCP server configured automatically. This also means collaborators who clone the repo get Ghost hooks out of the box.
+
+**Option B: Run `ghost enable` per worktree**
+
+```bash
+git worktree add ../my-feature feature-branch
+cd ../my-feature
+ghost enable
+```
+
+This creates `.claude/settings.json` and `.mcp.json` in the worktree. Session data still goes to the main repo. Use this if you prefer to keep config files untracked.
+
+**Note for Claude Code's automatic worktrees:** When Claude Code creates worktrees via the Agent tool (`isolation: "worktree"`), there's no opportunity to run `ghost enable`. If you use this feature and want sessions captured from worktree agents, commit the config files (Option A).
+
 ## Troubleshooting
 
 **Sessions not being captured**

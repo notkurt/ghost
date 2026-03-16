@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { $ } from "bun";
 
 // =============================================================================
@@ -6,10 +7,22 @@ import { $ } from "bun";
 
 const NOTES_REF = "ai-sessions";
 
-/** Get the git repository root directory */
-export async function repoRoot(): Promise<string> {
-  const result = await $`git rev-parse --show-toplevel`.quiet();
+/** Get the git repository root directory (worktree-aware — returns worktree path in worktrees) */
+export async function repoRoot(cwd?: string): Promise<string> {
+  const result = cwd
+    ? await $`git -C ${cwd} rev-parse --show-toplevel`.quiet()
+    : await $`git rev-parse --show-toplevel`.quiet();
   return result.text().trim();
+}
+
+/** Get the main repository root, resolving through worktrees to the original repo.
+ *  In a normal repo, this returns the same as repoRoot().
+ *  In a worktree, this returns the main repo root (not the worktree directory). */
+export async function mainRepoRoot(cwd?: string): Promise<string> {
+  const result = cwd
+    ? await $`git -C ${cwd} rev-parse --path-format=absolute --git-common-dir`.quiet()
+    : await $`git rev-parse --path-format=absolute --git-common-dir`.quiet();
+  return dirname(result.text().trim());
 }
 
 /** Get the current branch name */

@@ -3,6 +3,7 @@ node_modules/
 *.sqlite
 .ai-sessions/
 .cursor/
+pnpm-lock.yaml
 
 # Test artifacts
 .test-tmp-*/

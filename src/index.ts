@@ -8,7 +8,7 @@ import {
   StopInput,
   UserPromptInput,
 } from "./env.js";
-import { repoRoot } from "./git.js";
+import { mainRepoRoot, repoRoot } from "./git.js";
 
 // =============================================================================
 // Terminal Colors
@@ -281,7 +281,7 @@ if (import.meta.main) {
       }
 
       case "checkpoint": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { checkpoint } = await import("./session.js");
         await checkpoint(root);
         break;
@@ -306,14 +306,14 @@ if (import.meta.main) {
       }
 
       case "reset": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { reset } = await import("./setup.js");
         await reset(root);
         break;
       }
 
       case "status": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { status } = await import("./setup.js");
         await status(root);
         break;
@@ -365,7 +365,7 @@ if (import.meta.main) {
       }
 
       case "search": {
-        const _root = await repoRoot();
+        const _root = await mainRepoRoot();
         const { searchSessions } = await import("./qmd.js");
         const result = await searchSessions(cli.query, { tag: cli.values.tag as string | undefined });
         if (result) {
@@ -377,7 +377,7 @@ if (import.meta.main) {
       }
 
       case "log": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { listCompletedSessions, parseFrontmatter } = await import("./session.js");
         const { readFileSync } = await import("node:fs");
         const { completedSessionPath } = await import("./paths.js");
@@ -411,7 +411,7 @@ if (import.meta.main) {
         }
         // Check if arg is a session ID (e.g. 2025-06-15-a1b2c3d4)
         if (/^\d{4}-\d{2}-\d{2}-[0-9a-f]{8}$/.test(arg)) {
-          const root = await repoRoot();
+          const root = await mainRepoRoot();
           const { existsSync, readFileSync } = await import("node:fs");
           const { completedSessionPath, sessionFilePath } = await import("./paths.js");
           const completedPath = completedSessionPath(root, arg);
@@ -436,7 +436,7 @@ if (import.meta.main) {
       }
 
       case "tag": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { addTags, getMostRecentCompletedId } = await import("./session.js");
         let sessionId: string | undefined;
         let tags: string[];
@@ -457,7 +457,7 @@ if (import.meta.main) {
       }
 
       case "knowledge": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const subcommand = cli.args[0];
         const knowledgeSubcmds = ["build", "inject", "show", "diff"];
         if (subcommand && knowledgeSubcmds.includes(subcommand)) {
@@ -492,7 +492,7 @@ if (import.meta.main) {
       }
 
       case "decision": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const description = cli.args.join(" ");
         if (!description) {
           console.error('Usage: ghost decision "<description>"');
@@ -506,7 +506,7 @@ if (import.meta.main) {
       }
 
       case "mistake": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const description = cli.args.join(" ");
         if (!description) {
           console.error('Usage: ghost mistake "<description>"');
@@ -520,7 +520,7 @@ if (import.meta.main) {
       }
 
       case "strategy": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const description = cli.args.join(" ");
         if (!description) {
           console.error('Usage: ghost strategy "<description>"');
@@ -534,7 +534,7 @@ if (import.meta.main) {
       }
 
       case "decisions": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { listDecisions } = await import("./session.js");
         const content = listDecisions(root, cli.values.tag as string | undefined);
         if (content) {
@@ -546,7 +546,7 @@ if (import.meta.main) {
       }
 
       case "resume": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { findRecentSession, generateContinuityBlock } = await import("./session.js");
         const sessionId = cli.args[0] || (await findRecentSession(root));
         if (!sessionId) {
@@ -563,7 +563,7 @@ if (import.meta.main) {
       }
 
       case "brief": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const description = cli.args.join(" ");
         if (!description) {
           console.error('Usage: ghost brief "<description>"');
@@ -575,7 +575,7 @@ if (import.meta.main) {
       }
 
       case "heatmap": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { showHeatmap } = await import("./search.js");
         await showHeatmap(root, {
           tag: cli.values.tag as string | undefined,
@@ -586,7 +586,7 @@ if (import.meta.main) {
       }
 
       case "stats": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { showStats } = await import("./search.js");
         await showStats(root, {
           json: cli.values.json as boolean | undefined,
@@ -597,7 +597,7 @@ if (import.meta.main) {
       }
 
       case "edit": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { sessionDir, knowledgePath, mistakesPath, decisionsPath, strategiesPath } = await import("./paths.js");
         const target = cli.args[0];
         const paths: Record<string, string> = {
@@ -629,14 +629,14 @@ if (import.meta.main) {
       }
 
       case "absorb": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { absorb: absorbCmd } = await import("./knowledge.js");
         await absorbCmd(root, { dryRun: !!cli.values["dry-run"] });
         break;
       }
 
       case "genesis": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { genesis, injectKnowledge } = await import("./knowledge.js");
         const built = await genesis(root);
         if (built) {
@@ -646,7 +646,7 @@ if (import.meta.main) {
       }
 
       case "cleanup": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { cleanupOrphanedSessions } = await import("./session.js");
         const dryRun = !!cli.values["dry-run"];
         // Use 0 maxAge for manual cleanup — clean everything not actively in use
@@ -669,7 +669,7 @@ if (import.meta.main) {
       }
 
       case "validate": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { validate: validateFiles } = await import("./validate.js");
         const issues = validateFiles(root, { fix: !!cli.values.force });
         if (issues.length === 0) {
@@ -689,7 +689,7 @@ if (import.meta.main) {
       }
 
       case "reindex": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { indexSession } = await import("./qmd.js");
         const result = await indexSession(root);
         if (result.ok) {
@@ -702,7 +702,7 @@ if (import.meta.main) {
       }
 
       case "logs": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { existsSync, readFileSync } = await import("node:fs");
         const { join } = await import("node:path");
         const { SESSION_DIR } = await import("./paths.js");
@@ -726,7 +726,7 @@ if (import.meta.main) {
       }
 
       case "sync": {
-        const root = await repoRoot();
+        const root = await mainRepoRoot();
         const { syncKnowledge } = await import("./sync.js");
         await syncKnowledge(root);
         console.log("Shared knowledge synced.");
