@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import { $ } from "bun";
 import { checkQmd, resetDepCache } from "./deps.js";
-import { repoRoot } from "./git.js";
+import { mainRepoRoot } from "./git.js";
 import { completedDir } from "./paths.js";
 
 // =============================================================================
@@ -19,9 +19,9 @@ export function resetQmdCache(): void {
   resetDepCache();
 }
 
-/** Derive the QMD collection name from the git repo root */
+/** Derive the QMD collection name from the main repo root (stable across worktrees) */
 export async function collectionName(root?: string): Promise<string> {
-  const r = root || (await repoRoot());
+  const r = await mainRepoRoot(root);
   return `ghost-${basename(r)}`;
 }
 

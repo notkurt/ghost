@@ -9,7 +9,7 @@ import {
   printDepsReport,
   resetDepCache,
 } from "./deps.js";
-import { configSet } from "./git.js";
+import { configSet, mainRepoRoot } from "./git.js";
 import { activeDir, completedDir, SESSION_DIR } from "./paths.js";
 import { collectionExists, collectionName, createCollection } from "./qmd.js";
 
@@ -75,8 +75,13 @@ const GHOST_HOOKS = {
 // Enable
 // =============================================================================
 
-/** Set up ghost in the current git repo */
+/** Set up ghost in the current git repo.
+ *  `root` is the worktree-local directory (for config files like .claude/settings.json, .mcp.json).
+ *  Session storage and QMD use the main repo root (resolved internally via mainRepoRoot). */
 export async function enable(root: string, opts?: { install?: boolean; genesis?: boolean }): Promise<void> {
+  // Resolve main repo root for session storage (stable across worktrees)
+  const mainRoot = await mainRepoRoot(root);
+
   // 1. Check dependencies
   console.log(`${c.bold}Checking dependencies...${c.reset}`);
   let report = await checkAllDeps();
@@ -116,12 +121,12 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`  ${c.dim}Install: https://claude.ai/download${c.reset}`);
   }
 
-  // 2. Create session storage directories
-  mkdirSync(activeDir(root), { recursive: true });
-  mkdirSync(completedDir(root), { recursive: true });
+  // 2. Create session storage directories (in main repo root)
+  mkdirSync(activeDir(mainRoot), { recursive: true });
+  mkdirSync(completedDir(mainRoot), { recursive: true });
 
-  // 3. Ensure .ai-sessions/ is in the project's .gitignore
-  ensureGitignored(root);
+  // 3. Ensure .ai-sessions/ is in the project's .gitignore (main repo root)
+  ensureGitignored(mainRoot);
 
   // 4. Configure git notes display
   await configSet("notes.displayRef", "refs/notes/ai-sessions");
@@ -136,7 +141,7 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`);
 
   // 6. Add QMD MCP server config to .mcp.json (only if qmd is available)
-  const name = await collectionName(root);
+  const name = await collectionName(mainRoot);
   if (report.qmd.available) {
     const mcpPath = join(root, ".mcp.json");
     const mcpConfig = readSettings(mcpPath);
@@ -152,8 +157,8 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   // 7. Inject Ghost header into CLAUDE.md
   injectClaudeHeader(root);
 
-  // 8. Install git post-commit hook
-  const hooksDir = join(root, ".git", "hooks");
+  // 8. Install git post-commit hook (in main repo .git/hooks — shared across worktrees)
+  const hooksDir = join(mainRoot, ".git", "hooks");
   mkdirSync(hooksDir, { recursive: true });
   const postCommitPath = join(hooksDir, "post-commit");
   const hookContent = '#!/bin/sh\nexport PATH="$HOME/.bun/bin:$PATH"\nghost checkpoint &\n';
@@ -168,10 +173,10 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   const { chmod } = await import("node:fs/promises");
   await chmod(postCommitPath, 0o755);
 
-  // 9. Create initial QMD collection (if available)
+  // 9. Create initial QMD collection (if available, uses main repo root)
   let qmdOk = false;
   if (report.qmd.available) {
-    qmdOk = await createCollection(root);
+    qmdOk = await createCollection(mainRoot);
   }
 
   // 10. Report results
@@ -193,12 +198,12 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     console.log(`  ${c.bold}Summarize:${c.reset}    ${c.yellow}disabled${c.reset} (claude CLI not found)`);
   }
 
-  // 11. Initialize shared knowledge branch and pull team knowledge
+  // 11. Initialize shared knowledge branch and pull team knowledge (uses main repo root)
   try {
     const { initSharedBranch, pullShared } = await import("./sync.js");
-    const branchOk = await initSharedBranch(root);
+    const branchOk = await initSharedBranch(mainRoot);
     if (branchOk) {
-      await pullShared(root);
+      await pullShared(mainRoot);
       console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.green}(synced)${c.reset}`);
     } else {
       console.log(`  ${c.bold}Shared:${c.reset}       ghost/knowledge ${c.yellow}(skipped)${c.reset}`);
@@ -215,15 +220,15 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
     try {
       const claudeMdPath = join(root, "CLAUDE.md");
       if (existsSync(claudeMdPath) && readFileSync(claudeMdPath, "utf8").trim()) {
-        await absorb(root);
+        await absorb(mainRoot);
       }
     } catch {
       // absorb is best-effort during enable
     }
     // Then build knowledge from codebase
-    const built = await genesis(root);
+    const built = await genesis(mainRoot);
     if (built) {
-      await injectKnowledge(root);
+      await injectKnowledge(mainRoot);
     }
   } else if (opts?.genesis && !report.claude.available) {
     console.log(`\n${c.yellow}Skipping genesis — claude CLI required.${c.reset}`);
@@ -300,11 +305,12 @@ export async function disable(root: string): Promise<void> {
 
 /** Show ghost status for the current repo */
 export async function status(root: string): Promise<void> {
+  const mainRoot = await mainRepoRoot(root);
   const { getActiveSessionId, listCompletedSessions } = await import("./session.js");
 
-  const activeId = getActiveSessionId(root);
-  const completed = listCompletedSessions(root);
-  const pidFile = join(root, SESSION_DIR, ".background.pid");
+  const activeId = getActiveSessionId(mainRoot);
+  const completed = listCompletedSessions(mainRoot);
+  const pidFile = join(mainRoot, SESSION_DIR, ".background.pid");
   const bgRunning = existsSync(pidFile);
 
   console.log(`${c.bold}Active session:${c.reset}    ${activeId || "none"}`);
@@ -327,10 +333,10 @@ export async function status(root: string): Promise<void> {
 
   // Check dependencies
   const report = await checkAllDeps();
-  const name = await collectionName(root);
+  const name = await collectionName(mainRoot);
 
   if (report.qmd.available) {
-    const hasCollection = await collectionExists(root);
+    const hasCollection = await collectionExists(mainRoot);
     console.log(
       `${c.bold}QMD:${c.reset}               ${c.green}installed${c.reset}, collection ${name} ${hasCollection ? `${c.green}exists${c.reset}` : `${c.yellow}missing${c.reset}`}`,
     );
@@ -345,7 +351,7 @@ export async function status(root: string): Promise<void> {
   // Check shared branch status
   try {
     const { branchExists } = await import("./git.js");
-    const exists = await branchExists("ghost/knowledge", root);
+    const exists = await branchExists("ghost/knowledge", mainRoot);
     console.log(
       `${c.bold}Shared branch:${c.reset}     ${exists ? `${c.green}ghost/knowledge${c.reset}` : `${c.yellow}not initialized${c.reset}`}`,
     );
@@ -354,7 +360,7 @@ export async function status(root: string): Promise<void> {
   }
 
   // Show last background log lines
-  const bgLogFile = join(root, SESSION_DIR, ".background.log");
+  const bgLogFile = join(mainRoot, SESSION_DIR, ".background.log");
   if (existsSync(bgLogFile)) {
     try {
       const logContent = readFileSync(bgLogFile, "utf8").trim();
@@ -378,6 +384,7 @@ export async function status(root: string): Promise<void> {
 
 /** Wipe all session data, git notes, and QMD collection. Keeps ghost enabled. */
 export async function reset(root: string): Promise<void> {
+  root = await mainRepoRoot(root);
   const dir = join(root, SESSION_DIR);
   if (!existsSync(dir)) {
     console.log("Nothing to reset — no .ai-sessions/ directory found.");
