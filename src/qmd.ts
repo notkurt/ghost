@@ -95,22 +95,23 @@ export async function searchSessions(query: string, opts?: { tag?: string; colle
   }
 }
 
-/** Create initial QMD collection for the project. Returns true if successful. */
-export async function createCollection(root: string): Promise<boolean> {
-  if (!(await isQmdAvailable())) return false;
+/** Create initial QMD collection for the project. Returns { ok, reason } for diagnostic output. */
+export async function createCollection(root: string): Promise<{ ok: boolean; reason?: string }> {
+  if (!(await isQmdAvailable())) return { ok: false, reason: "qmd not available" };
   const name = await collectionName(root);
   const dir = completedDir(root);
   try {
-    if (await collectionExists(root)) return true;
+    if (await collectionExists(root)) return { ok: true };
     await $`qmd collection add ${dir} --name ${name}`.quiet();
     await $`qmd context add ${dir} "AI coding session transcripts and reasoning"`.quiet();
-    return true;
+    return { ok: true };
   } catch (err) {
     // If collection already exists (collectionExists may have failed to detect it),
     // treat as success. Bun ShellError puts the actual message in stderr.
-    const msg = `${err instanceof Error ? err.message : String(err)} ${(err as { stderr?: { toString(): string } })?.stderr?.toString() ?? ""}`;
-    if (msg.includes("already exists")) return true;
-    return false;
+    const stderr = (err as { stderr?: { toString(): string } })?.stderr?.toString() ?? "";
+    const msg = `${err instanceof Error ? err.message : String(err)} ${stderr}`;
+    if (msg.includes("already exists")) return { ok: true };
+    return { ok: false, reason: stderr.trim() || (err instanceof Error ? err.message : String(msg)).trim() };
   }
 }
 
