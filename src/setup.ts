@@ -174,9 +174,9 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   await chmod(postCommitPath, 0o755);
 
   // 9. Create initial QMD collection (if available, uses main repo root)
-  let qmdOk = false;
+  let qmdResult: { ok: boolean; reason?: string } = { ok: false };
   if (report.qmd.available) {
-    qmdOk = await createCollection(mainRoot);
+    qmdResult = await createCollection(mainRoot);
   }
 
   // 10. Report results
@@ -185,9 +185,14 @@ export async function enable(root: string, opts?: { install?: boolean; genesis?:
   console.log(`  ${c.bold}Hooks:${c.reset}        .claude/settings.json`);
   console.log(`  ${c.bold}Git notes:${c.reset}    refs/notes/ai-sessions`);
   if (report.qmd.available) {
-    console.log(
-      `  ${c.bold}QMD:${c.reset}          ${name}${qmdOk ? ` ${c.green}(created)${c.reset}` : ` ${c.red}(failed to create)${c.reset}`}`,
-    );
+    if (qmdResult.ok) {
+      console.log(`  ${c.bold}QMD:${c.reset}          ${name} ${c.green}(created)${c.reset}`);
+    } else {
+      console.log(`  ${c.bold}QMD:${c.reset}          ${name} ${c.red}(failed to create)${c.reset}`);
+      if (qmdResult.reason) {
+        console.log(`  ${c.dim}              ${qmdResult.reason}${c.reset}`);
+      }
+    }
     console.log(`  ${c.bold}MCP server:${c.reset}   ghost-sessions`);
   } else {
     console.log(`  ${c.bold}QMD:${c.reset}          ${c.yellow}not installed${c.reset} (search disabled)`);

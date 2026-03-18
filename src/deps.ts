@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { $ } from "bun";
 
 // =============================================================================
@@ -57,9 +58,28 @@ export function resetDepCache(): void {
 // Individual Dependency Checks
 // =============================================================================
 
-/** Check if qmd is installed */
+/** Check if qmd is installed and functional.
+ *  The binary shim may exist on PATH but point to a missing dist/ directory
+ *  (e.g. when `bun install -g` didn't run the build step). We verify by
+ *  running `qmd collection list` which exercises the actual module. */
 export async function checkQmd(): Promise<DepStatus> {
-  return checkBinary("qmd");
+  const base = await checkBinary("qmd");
+  if (!base.available) return base;
+  // Verify qmd can actually execute — not just that the shim exists
+  try {
+    await $`qmd collection list`.quiet();
+    return base;
+  } catch (err) {
+    const stderr = (err as { stderr?: { toString(): string } })?.stderr?.toString() ?? "";
+    const msg = stderr || (err instanceof Error ? err.message : String(err));
+    // Module not found = broken install (shim exists but dist/ missing)
+    if (msg.includes("Module not found") || msg.includes("Cannot find module")) {
+      _cache.qmd = { available: false, version: "broken install", path: base.path };
+      return _cache.qmd!;
+    }
+    // Other errors (e.g. no collections yet) are fine — qmd itself works
+    return base;
+  }
 }
 
 /** Check if claude CLI is installed */
@@ -100,6 +120,28 @@ export async function installQmd(): Promise<boolean> {
     if (check.available) {
       console.log(`  qmd installed successfully.`);
       return true;
+    }
+    // Binary exists but module missing — try running the build step
+    if (check.version === "broken install") {
+      console.log("  qmd shim installed but build step did not run. Building...");
+      const pkgDir = join(home, ".bun", "install", "global", "node_modules", "@tobilu", "qmd");
+      try {
+        await $`cd ${pkgDir} && bun run build`.quiet();
+        resetDepCache();
+        const recheck = await checkQmd();
+        if (recheck.available) {
+          console.log(`  qmd built and installed successfully.`);
+          return true;
+        }
+      } catch (buildErr) {
+        const stderr = (buildErr as { stderr?: { toString(): string } })?.stderr?.toString() ?? "";
+        console.error(
+          `  qmd build failed: ${stderr.trim() || (buildErr instanceof Error ? buildErr.message : String(buildErr))}`,
+        );
+      }
+      console.error(`  qmd build did not produce a working install.`);
+      console.error(`  Try manually: cd ${pkgDir} && bun run build`);
+      return false;
     }
     console.error("  qmd installation completed but binary not found on PATH.");
     console.error("  Ensure ~/.bun/bin is in your PATH.");
@@ -147,7 +189,15 @@ export function printDepsReport(report: DepsReport): void {
   const ver = (s: DepStatus) => (s.version ? ` (${s.version})` : "");
 
   console.log(`  bun: ${ok(report.bun)}${ver(report.bun)}`);
-  console.log(`  qmd: ${ok(report.qmd)}${ver(report.qmd)}`);
+  if (report.qmd.version === "broken install") {
+    const qmdPkgDir = join(home, ".bun", "install", "global", "node_modules", "@tobilu", "qmd");
+    console.log(`  qmd: broken install (shim exists but module missing)`);
+    console.log(`        The qmd build step may not have run during installation.`);
+    console.log(`        Fix: cd ${qmdPkgDir} && bun run build`);
+    console.log(`        Or reinstall: bun install -g github:tobi/qmd --force`);
+  } else {
+    console.log(`  qmd: ${ok(report.qmd)}${ver(report.qmd)}`);
+  }
   console.log(`  claude: ${ok(report.claude)}${ver(report.claude)}`);
   console.log(`  sqlite (brew): ${ok(report.sqlite)}`);
 }
