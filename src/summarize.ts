@@ -84,7 +84,7 @@ export async function summarize(sessionPath: string): Promise<string | null> {
   if (!claude.available) return null;
 
   try {
-    const proc = Bun.spawn(["claude", "-p", SUMMARY_PROMPT], {
+    const proc = Bun.spawn(["claude", "-p", "--no-session-persistence", SUMMARY_PROMPT], {
       stdin: Bun.file(sessionPath),
       stdout: "pipe",
       stderr: "pipe",
